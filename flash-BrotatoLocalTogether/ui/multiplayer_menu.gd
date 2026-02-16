@@ -33,7 +33,8 @@ func _ready() -> void:
 		_append_system_message(String(message))
 	steam_connection.pending_system_messages.clear()
 
-	create_lobby_button.grab_focus()
+	if is_inside_tree():
+		create_lobby_button.call_deferred("grab_focus")
 	CoopService.clear_coop_players()
 	_on_refresh_lobbies_button_pressed()
 

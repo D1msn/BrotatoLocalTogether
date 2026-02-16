@@ -36,9 +36,12 @@ static func get_forced_disabled_groups() -> Array:
 static func get_forced_disabled_extension_paths(ext_dir: String) -> Array:
 	# turret extension провоцирует загрузку отсутствующего
 	# res://tests/partial_doubles/pd_turret.gd на актуальной версии игры.
-	# Отключаем до отдельной адаптации.
+	# FocusEmulator extension также конфликтует с текущей версией игры:
+	# появляются дубли сигналов и ошибки работы вне tree.
+	# Отключаем оба path до отдельной адаптации.
 	return [
 		ext_dir + "entities/structures/turret/turret.gd",
+		ext_dir + "ui/menus/global/focus_emulator.gd",
 	]
 
 

@@ -38,23 +38,22 @@ var external_focus = false
 
 func _ready():
 	steam_connection = $"/root/SteamConnection"
-	steam_connection.connect("global_chat_received", self, "_received_global_chat")
-	steam_connection.connect("game_lobby_chat_received", self, "_received_lobby_chat")
-	steam_connection.connect("player_focused_character", self, "_player_focused_character")
-	steam_connection.connect("player_selected_character", self, "_player_selected_character")
-	steam_connection.connect("character_lobby_update", self, "_lobby_characters_updated")
-	steam_connection.connect("request_character_lobby_update", self, "_character_lobby_update_requested")
-	steam_connection.connect("character_selection_complete", self, "_host_character_selection_complete")
+	_connect_steam_signal("global_chat_received", "_received_global_chat")
+	_connect_steam_signal("game_lobby_chat_received", "_received_lobby_chat")
+	_connect_steam_signal("player_focused_character", "_player_focused_character")
+	_connect_steam_signal("player_selected_character", "_player_selected_character")
+	_connect_steam_signal("character_lobby_update", "_lobby_characters_updated")
+	_connect_steam_signal("request_character_lobby_update", "_character_lobby_update_requested")
+	_connect_steam_signal("character_selection_complete", "_host_character_selection_complete")
 	
-	# TODO gracefully add new players
-	steam_connection.connect("lobby_players_updated", self, "reload_scene")
+	# Перезагрузка сцены на каждое событие лобби вызывала фриз/зацикливание.
+	_connect_steam_signal("lobby_players_updated", "_on_lobby_players_updated")
 	
 	brotatogether_options = $"/root/BrotogetherOptions"
 	is_multiplayer_lobby = brotatogether_options.joining_multiplayer_lobby
 	
 	if is_multiplayer_lobby:
 		ProgressData.settings.coop_mode_toggled = true
-		_coop_button.init()
 		_coop_button.hide()
 		var run_options_top_panel = _run_options_panel.get_node("MarginContainer/VBoxContainer/HBoxContainer")
 		run_options_top_panel.remove_child(run_options_top_panel.get_node("Icon"))
@@ -93,8 +92,7 @@ func _ready():
 		$"MarginContainer/VBoxContainer/DescriptionContainer/HBoxContainer/Panel4/vboxContainer".move_child(username_label_player_4, 0)
 		username_labels.push_back(username_label_player_4)
 		
-		for index in steam_connection.lobby_member_names.size():
-			username_labels[index].text = steam_connection.lobby_member_names[index]
+		_update_username_labels()
 		
 		global_chat_panel = ChatPanel.instance()
 		global_chat_panel.get_node("MarginContainer/VBoxContainer/HBoxContainer/ChatTitle").text = "Global Chat"
@@ -140,6 +138,50 @@ func _ready():
 				selections_by_string_key[character_item_to_string(character_data)] = character_data
 			else:
 				inventory_by_string_key[character_item_to_string(character_data.item)] = character_data
+
+
+func _exit_tree() -> void:
+	_disconnect_steam_signal("global_chat_received", "_received_global_chat")
+	_disconnect_steam_signal("game_lobby_chat_received", "_received_lobby_chat")
+	_disconnect_steam_signal("player_focused_character", "_player_focused_character")
+	_disconnect_steam_signal("player_selected_character", "_player_selected_character")
+	_disconnect_steam_signal("character_lobby_update", "_lobby_characters_updated")
+	_disconnect_steam_signal("request_character_lobby_update", "_character_lobby_update_requested")
+	_disconnect_steam_signal("character_selection_complete", "_host_character_selection_complete")
+	_disconnect_steam_signal("lobby_players_updated", "_on_lobby_players_updated")
+	._exit_tree()
+
+
+func _connect_steam_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	if steam_connection.is_connected(signal_name, self, method_name):
+		return
+	var _connect_error = steam_connection.connect(signal_name, self, method_name)
+
+
+func _disconnect_steam_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	if not steam_connection.is_connected(signal_name, self, method_name):
+		return
+	steam_connection.disconnect(signal_name, self, method_name)
+
+
+func _on_lobby_players_updated() -> void:
+	if not is_multiplayer_lobby:
+		return
+	if not is_inside_tree():
+		return
+	_update_username_labels()
+
+
+func _update_username_labels() -> void:
+	for index in username_labels.size():
+		if index < steam_connection.lobby_member_names.size():
+			username_labels[index].text = String(steam_connection.lobby_member_names[index])
+		else:
+			username_labels[index].text = ""
 
 
 func _on_pressed_left_menu_arrow() -> void:
@@ -238,6 +280,8 @@ func _player_selected_character(player_index : int) -> void:
 
 
 func reload_scene() -> void:
+	if not is_inside_tree():
+		return
 	$"/root/BrotogetherOptions".joining_multiplayer_lobby = true
 	var _error = get_tree().change_scene(MenuData.character_selection_scene)
 
@@ -265,6 +309,13 @@ func _set_selected_element(player_index:int) -> void:
 	
 	._set_selected_element(player_index)
 	
+	# В локальном лобби с одним участником (только host) базовая логика coop
+	# не завершает выбор автоматически. Для ручной проверки и solo-host
+	# режима продолжаем ран сразу.
+	if is_multiplayer_lobby and steam_connection.is_host() and steam_connection.lobby_members.size() <= 1:
+		_on_selections_completed()
+		return
+
 	if steam_connection.get_lobby_index_for_player(steam_connection.steam_id) == player_index:
 		steam_connection.character_selected()
 

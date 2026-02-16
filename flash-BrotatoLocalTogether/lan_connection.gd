@@ -16,6 +16,15 @@ const HOST_PEER_ID := 1
 const MAX_PLAYERS := 4
 const SNAPSHOT_INTERVAL_MSEC := 3000
 const SESSION_TTL_SEC := 900
+const PROTOCOL_VERSION := 1
+const ENVELOPE_MAX_SEQ := 2147483647
+const ENVELOPE_KEY_PROTOCOL_VERSION := "PROTOCOL_VERSION"
+const ENVELOPE_KEY_MESSAGE_TYPE := "MESSAGE_TYPE"
+const ENVELOPE_KEY_SESSION_ID := "SESSION_ID"
+const ENVELOPE_KEY_SEQUENCE := "SEQ"
+const ENVELOPE_KEY_TICK := "TICK"
+const ENVELOPE_KEY_SENT_AT_MSEC := "SENT_AT_MSEC"
+const ENVELOPE_KEY_PAYLOAD := "PAYLOAD"
 const LOG_NAME := "BrotatoLocalTogether:SessionConnection"
 
 var network_peer : NetworkedMultiplayerENet = null
@@ -39,6 +48,7 @@ var last_rejection_reason : String = ""
 var pending_restore_snapshot : Dictionary = {}
 var pending_client_recovery_state : Dictionary = {}
 var attempted_tokenless_retry : bool = false
+var outgoing_sequence : int = 0
 
 signal session_resume_available(session_id, expires_at_unix)
 signal session_resumed(session_id, player_slot)
@@ -352,7 +362,11 @@ func send_p2p_packet(data : Dictionary, message_type : int, target_id = -1) -> v
 	if game_lobby_id == -1 or network_peer == null or not get_tree().has_network_peer():
 		return
 
-	var compressed_data: PoolByteArray = var2bytes(data).compress(File.COMPRESSION_GZIP)
+	var safe_payload : Dictionary = {}
+	if data != null:
+		safe_payload = data.duplicate(true)
+	var envelope = _build_envelope(safe_payload, message_type)
+	var compressed_data: PoolByteArray = var2bytes(envelope).compress(File.COMPRESSION_GZIP)
 
 	if target_id == -1:
 		if is_host():
@@ -360,29 +374,31 @@ func send_p2p_packet(data : Dictionary, message_type : int, target_id = -1) -> v
 			for peer_id in connected_peers:
 				if peer_id == steam_id:
 					continue
-				rpc_id(peer_id, "_receive_enet_packet", message_type, compressed_data)
+				_send_rpc_packet(int(peer_id), message_type, compressed_data)
 		elif game_lobby_owner_id > 0:
-			rpc_id(game_lobby_owner_id, "_receive_enet_packet", message_type, compressed_data)
+			_send_rpc_packet(game_lobby_owner_id, message_type, compressed_data)
 		return
 
 	if target_id == steam_id:
 		return
 
-	rpc_id(target_id, "_receive_enet_packet", message_type, compressed_data)
+	_send_rpc_packet(int(target_id), message_type, compressed_data)
 
 
 remote func _receive_enet_packet(message_type : int, compressed_data : PoolByteArray) -> void:
 	var sender_id = get_tree().get_rpc_sender_id()
 
-	var payload : Dictionary = {}
+	var decoded_payload = null
 	if compressed_data.size() > 0:
 		var unpacked_data = compressed_data.decompress_dynamic(-1, File.COMPRESSION_GZIP)
 		if unpacked_data.size() > 0:
-			var decoded = bytes2var(unpacked_data)
-			if decoded is Dictionary:
-				payload = decoded
+			decoded_payload = bytes2var(unpacked_data)
 
-	_dispatch_incoming_packet(message_type, payload, sender_id)
+	var packet = _parse_received_packet(message_type, decoded_payload, sender_id)
+	if not bool(packet.get("ok", false)):
+		return
+
+	_dispatch_incoming_packet(int(packet.get("message_type", message_type)), packet.get("payload", {}), sender_id)
 
 
 func read_p2p_packet() -> void:
@@ -584,6 +600,7 @@ func _on_connected_to_server() -> void:
 			"USERNAME": local_name,
 			"SESSION_ID": requested_session_id,
 			"PLAYER_TOKEN": requested_token,
+			"PROTOCOL_VERSION": PROTOCOL_VERSION,
 		},
 		SESSION_MESSAGE_REGISTER_CLIENT,
 		game_lobby_owner_id
@@ -617,6 +634,14 @@ func _receive_client_registration(data : Dictionary, sender_id : int) -> void:
 	var username = "Player %d" % sender_id
 	if data.has("USERNAME"):
 		username = _sanitize_username(String(data["USERNAME"]))
+	var remote_protocol_version = int(data.get("PROTOCOL_VERSION", 0))
+	if remote_protocol_version != PROTOCOL_VERSION:
+		_send_register_reject(
+			sender_id,
+			"protocol_mismatch",
+			"Protocol mismatch: host=%d client=%d" % [PROTOCOL_VERSION, remote_protocol_version]
+		)
+		return
 
 	var requested_session_id = String(data.get("SESSION_ID", "")).strip_edges()
 	var requested_token = String(data.get("PLAYER_TOKEN", "")).strip_edges()
@@ -684,6 +709,7 @@ func _receive_client_registration(data : Dictionary, sender_id : int) -> void:
 		"HOST_ENDPOINT": host_endpoint,
 		"RESUMED": is_resumed,
 		"GAME_PHASE": _current_game_phase(),
+		"PROTOCOL_VERSION": PROTOCOL_VERSION,
 	}
 	send_p2p_packet(ack_payload, SESSION_MESSAGE_REGISTER_ACK, sender_id)
 	_send_lobby_sync()
@@ -704,6 +730,16 @@ func _receive_client_registration_ack(data : Dictionary, sender_id : int) -> voi
 			{
 				"REASON_CODE": "bad_ack",
 				"REASON_TEXT": "Invalid registration ack",
+			},
+			sender_id
+		)
+		return
+	var remote_protocol_version = int(data.get("PROTOCOL_VERSION", 0))
+	if remote_protocol_version != PROTOCOL_VERSION:
+		_receive_client_registration_reject(
+			{
+				"REASON_CODE": "protocol_mismatch",
+				"REASON_TEXT": "Protocol mismatch: host=%d client=%d" % [remote_protocol_version, PROTOCOL_VERSION],
 			},
 			sender_id
 		)
@@ -767,6 +803,7 @@ func _receive_client_registration_reject(data : Dictionary, sender_id : int) -> 
 				"USERNAME": _name_for_peer(steam_id),
 				"SESSION_ID": "",
 				"PLAYER_TOKEN": "",
+				"PROTOCOL_VERSION": PROTOCOL_VERSION,
 			},
 			SESSION_MESSAGE_REGISTER_CLIENT,
 			game_lobby_owner_id
@@ -785,10 +822,141 @@ func _send_register_reject(target_peer_id: int, reason_code: String, reason_text
 		{
 			"REASON_CODE": reason_code,
 			"REASON_TEXT": reason_text,
+			"PROTOCOL_VERSION": PROTOCOL_VERSION,
 		},
 		SESSION_MESSAGE_REGISTER_REJECT,
 		target_peer_id
 	)
+
+
+func _next_outgoing_sequence() -> int:
+	outgoing_sequence += 1
+	if outgoing_sequence >= ENVELOPE_MAX_SEQ:
+		outgoing_sequence = 1
+	return outgoing_sequence
+
+
+func _build_envelope(payload: Dictionary, message_type: int) -> Dictionary:
+	return {
+		ENVELOPE_KEY_PROTOCOL_VERSION: PROTOCOL_VERSION,
+		ENVELOPE_KEY_MESSAGE_TYPE: message_type,
+		ENVELOPE_KEY_SESSION_ID: session_id,
+		ENVELOPE_KEY_SEQUENCE: _next_outgoing_sequence(),
+		ENVELOPE_KEY_TICK: Engine.get_physics_frames(),
+		ENVELOPE_KEY_SENT_AT_MSEC: Time.get_ticks_msec(),
+		ENVELOPE_KEY_PAYLOAD: payload,
+	}
+
+
+func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_id: int) -> Dictionary:
+	var result = {
+		"ok": true,
+		"message_type": fallback_message_type,
+		"payload": {},
+	}
+	if not (decoded_payload is Dictionary):
+		return result
+
+	var decoded_dict: Dictionary = decoded_payload
+
+	if decoded_dict.has(ENVELOPE_KEY_PAYLOAD) and decoded_dict.has(ENVELOPE_KEY_MESSAGE_TYPE):
+		var remote_protocol_version = int(decoded_dict.get(ENVELOPE_KEY_PROTOCOL_VERSION, 0))
+		var parsed_message_type = int(decoded_dict.get(ENVELOPE_KEY_MESSAGE_TYPE, fallback_message_type))
+		var remote_session_id = String(decoded_dict.get(ENVELOPE_KEY_SESSION_ID, "")).strip_edges()
+		var payload_data = decoded_dict.get(ENVELOPE_KEY_PAYLOAD, {})
+
+		if remote_protocol_version != PROTOCOL_VERSION:
+			if parsed_message_type == SESSION_MESSAGE_REGISTER_CLIENT and is_host():
+				_send_register_reject(
+					sender_id,
+					"protocol_mismatch",
+					"Protocol mismatch: host=%d client=%d" % [PROTOCOL_VERSION, remote_protocol_version]
+				)
+			result["ok"] = false
+			return result
+
+		if _is_session_bound_message(parsed_message_type):
+			if not session_id.empty() and not remote_session_id.empty() and remote_session_id != session_id:
+				result["ok"] = false
+				return result
+
+		result["message_type"] = parsed_message_type
+		if payload_data is Dictionary:
+			result["payload"] = payload_data
+		return result
+
+	result["payload"] = decoded_dict
+	return result
+
+
+func _is_session_bound_message(message_type: int) -> bool:
+	if message_type == SESSION_MESSAGE_REGISTER_CLIENT:
+		return false
+	if message_type == SESSION_MESSAGE_REGISTER_ACK:
+		return false
+	if message_type == SESSION_MESSAGE_REGISTER_REJECT:
+		return false
+	return true
+
+
+func _send_rpc_packet(target_peer_id: int, message_type: int, compressed_data: PoolByteArray) -> void:
+	if target_peer_id <= 0:
+		return
+	var previous_channel = network_peer.transfer_channel
+	network_peer.transfer_channel = _transfer_channel_for_message(message_type)
+	if _is_unreliable_message(message_type) and has_method("rpc_unreliable_id"):
+		rpc_unreliable_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
+	else:
+		rpc_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
+	network_peer.transfer_channel = previous_channel
+
+
+func _is_unreliable_message(message_type: int) -> bool:
+	match message_type:
+		MessageType.MESSAGE_TYPE_PING:
+			return true
+		MessageType.MESSAGE_TYPE_PONG:
+			return true
+		MessageType.MESSAGE_TYPE_LATENCY_REPORT:
+			return true
+		MessageType.MESSAGE_TYPE_PLAYER_STATUS:
+			return true
+		MessageType.MESSAGE_TYPE_CHARACTER_FOCUS:
+			return true
+		MessageType.MESSAGE_TYPE_WEAPON_FOCUS:
+			return true
+		MessageType.MESSAGE_TYPE_DIFFICULTY_FOCUSED:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_ITEM_FOCUS:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_INVENTORY_ITEM_FOCUS:
+			return true
+		MessageType.MESSAGE_TYPE_CLIENT_POSITION:
+			return true
+		MessageType.MESSAGE_TYPE_CLIENT_FOCUS_MAIN_SCENE:
+			return true
+		MessageType.MESSAGE_TYPE_MAIN_STATE:
+			return true
+	return false
+
+
+func _transfer_channel_for_message(message_type: int) -> int:
+	match message_type:
+		MessageType.MESSAGE_TYPE_MAIN_STATE:
+			return 2
+		MessageType.MESSAGE_TYPE_CLIENT_POSITION:
+			return 2
+		MessageType.MESSAGE_TYPE_CLIENT_FOCUS_MAIN_SCENE:
+			return 2
+		MessageType.MESSAGE_TYPE_CHARACTER_FOCUS:
+			return 1
+		MessageType.MESSAGE_TYPE_WEAPON_FOCUS:
+			return 1
+		MessageType.MESSAGE_TYPE_SHOP_ITEM_FOCUS:
+			return 1
+		MessageType.MESSAGE_TYPE_SHOP_INVENTORY_ITEM_FOCUS:
+			return 1
+	return 0
 
 
 func _send_lobby_sync() -> void:
@@ -1210,8 +1378,12 @@ func _is_private_ipv4(address : String) -> bool:
 
 
 func _get_options():
-	if has_node("/root/BrotogetherOptions"):
-		return $"/root/BrotogetherOptions"
+	if not is_inside_tree():
+		return null
+	var tree = get_tree()
+	if tree == null or tree.root == null:
+		return null
+	return tree.root.get_node_or_null("BrotogetherOptions")
 	return null
 
 

@@ -155,6 +155,48 @@ extension_rollout_count=$RolloutCount
     [System.IO.File]::WriteAllText($CompatPath, $content, $utf8NoBom)
 }
 
+function Increment-ManifestVersionNumber {
+    param(
+        [Parameter(Mandatory = $true)][string]$ManifestPath,
+        [Parameter(Mandatory = $true)][bool]$DryRunMode
+    )
+
+    if (-not (Test-Path $ManifestPath)) {
+        throw "manifest.json не найден: $ManifestPath"
+    }
+
+    $raw = Get-Content -Path $ManifestPath -Raw -Encoding UTF8
+    $regex = [regex]'"version_number"\s*:\s*"(?<version>\d+\.\d+\.\d+)"'
+    $match = $regex.Match($raw)
+    if (-not $match.Success) {
+        throw "Не удалось найти version_number в manifest.json: $ManifestPath"
+    }
+
+    $oldVersion = $match.Groups["version"].Value
+    $parts = $oldVersion.Split('.')
+    if ($parts.Count -ne 3) {
+        throw "Некорректный формат version_number: $oldVersion"
+    }
+
+    $patch = 0
+    if (-not [int]::TryParse($parts[2], [ref]$patch)) {
+        throw "Не удалось распарсить patch-версию из version_number: $oldVersion"
+    }
+
+    $newVersion = "0.0.{0}" -f ($patch + 1)
+    $updated = $regex.Replace($raw, ('"version_number": "{0}"' -f $newVersion), 1)
+
+    if (-not $DryRunMode) {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($ManifestPath, $updated, $utf8NoBom)
+    }
+
+    return @{
+        OldVersion = $oldVersion
+        NewVersion = $newVersion
+    }
+}
+
 if ($FullMod) {
     $CompatRolloutCount = -1
 }
@@ -171,6 +213,10 @@ $zipPath = Join-Path $buildDir $zipName
 if (-not (Test-Path $modSourceDir)) {
     throw "Исходник мода не найден: $modSourceDir"
 }
+
+$manifestPath = Join-Path $modSourceDir "manifest.json"
+$versionResult = Increment-ManifestVersionNumber -ManifestPath $manifestPath -DryRunMode $DryRun.IsPresent
+Write-Step ("Версия мода: {0} -> {1}" -f $versionResult.OldVersion, $versionResult.NewVersion)
 
 $workshopRoot = Get-WorkshopRoot -CurrentGameDir $GameDir -CurrentSteamAppId $SteamAppId
 if (-not (Test-Path $workshopRoot)) {
