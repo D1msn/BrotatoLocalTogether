@@ -359,7 +359,12 @@ func send_lobby_chat_message(message : String) -> void:
 
 
 func send_p2p_packet(data : Dictionary, message_type : int, target_id = -1) -> void:
-	if game_lobby_id == -1 or network_peer == null or not get_tree().has_network_peer():
+	if not is_inside_tree():
+		return
+	var tree = get_tree()
+	if tree == null:
+		return
+	if game_lobby_id == -1 or network_peer == null or not tree.has_network_peer():
 		return
 
 	var safe_payload : Dictionary = {}
@@ -370,7 +375,7 @@ func send_p2p_packet(data : Dictionary, message_type : int, target_id = -1) -> v
 
 	if target_id == -1:
 		if is_host():
-			var connected_peers = get_tree().get_network_connected_peers()
+			var connected_peers = tree.get_network_connected_peers()
 			for peer_id in connected_peers:
 				if peer_id == steam_id:
 					continue
@@ -386,7 +391,12 @@ func send_p2p_packet(data : Dictionary, message_type : int, target_id = -1) -> v
 
 
 remote func _receive_enet_packet(message_type : int, compressed_data : PoolByteArray) -> void:
-	var sender_id = get_tree().get_rpc_sender_id()
+	if not is_inside_tree():
+		return
+	var tree = get_tree()
+	if tree == null:
+		return
+	var sender_id = tree.get_rpc_sender_id()
 
 	var decoded_payload = null
 	if compressed_data.size() > 0:

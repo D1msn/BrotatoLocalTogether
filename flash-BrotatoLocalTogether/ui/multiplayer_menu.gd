@@ -1,11 +1,8 @@
 extends Control
 
-const ChatMessage = preload("res://mods-unpacked/flash-BrotatoLocalTogether/ui/chat/chat_message.tscn")
 const LobbyEntry = preload("res://mods-unpacked/flash-BrotatoLocalTogether/ui/lobby_entry.tscn")
 
-onready var chat_messages = $"%ChatMessages"
 onready var lobbies_list = $"%Lobbies"
-onready var chat_input : LineEdit = $"%ChatInput"
 onready var create_lobby_button : Button = $"%CreateLobbyButton"
 onready var refresh_lobbies_button : Button = $"HBoxContainer/ChatContainer2/VBoxContainer/HBoxContainer/RefreshLobbiesButton"
 
@@ -23,7 +20,6 @@ var shown_lobbies : Dictionary = {}
 
 func _ready() -> void:
 	steam_connection = $"/root/SteamConnection"
-	steam_connection.connect("global_chat_received", self, "_received_global_chat")
 	steam_connection.connect("game_lobby_found", self, "_game_lobby_found")
 
 	brotatogether_options = $"/root/BrotogetherOptions"
@@ -90,10 +86,7 @@ func _update_resume_button_state() -> void:
 
 
 func _append_system_message(message : String) -> void:
-	var new_message_node = ChatMessage.instance()
-	new_message_node.message = message
-	new_message_node.username = "SYSTEM"
-	chat_messages.add_child(new_message_node)
+	print("[BrotatoLocalTogether] " + message)
 
 
 func _input(event:InputEvent) -> void:
@@ -110,18 +103,6 @@ func manage_back(event:InputEvent) -> void:
 func _on_back_button_pressed() -> void:
 	RunData.reload_music = false
 	var _error = get_tree().change_scene(MenuData.title_screen_scene)
-
-
-func _on_chat_input_text_entered(message : String) -> void:
-	steam_connection.send_global_chat_message(message)
-	chat_input.clear()
-
-
-func _received_global_chat(user : String, message : String) -> void:
-	var new_message_node = ChatMessage.instance()
-	new_message_node.message = message
-	new_message_node.username = user
-	chat_messages.add_child(new_message_node)
 
 
 func _read_host_port() -> int:
