@@ -1,0 +1,18 @@
+{
+	"id": "BrotatoLocalTogether",
+	"name": "BrotatoLocalTogether",
+	"namespace": "flash",
+	"version_number": "0.1.0",
+	"description": "LAN/Tailscale coop for Brotato without Steam lobbies.",
+	"website_url": "",
+	"dependencies": [],
+	"extra": {
+		"godot": {
+			"incompatibilities": [],
+			"authors": ["flash"],
+			"compatible_mod_loader_version": ["6.0.0"],
+			"compatible_game_version": ["1.1.14.1"],
+			"config_defaults": {}
+		}
+	}
+}
