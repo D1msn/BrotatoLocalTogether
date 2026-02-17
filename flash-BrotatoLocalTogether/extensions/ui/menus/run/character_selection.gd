@@ -1,6 +1,7 @@
 extends "res://ui/menus/run/character_selection.gd"
 
 const UsernameLabel = preload("res://mods-unpacked/flash-BrotatoLocalTogether/ui/username_label.tscn")
+const DiagnosticsLogger = preload("res://mods-unpacked/flash-BrotatoLocalTogether/logging/diagnostics_logger.gd")
 
 const MULTIPLAYER_CLIENT_PLAYER_TYPE = 10
 
@@ -25,6 +26,7 @@ var lobby_reload_pending : bool = false
 
 func _ready():
 	steam_connection = $"/root/NetworkConnection"
+	_diag("ready start")
 	_connect_steam_signal("player_focused_character", "_player_focused_character")
 	_connect_steam_signal("player_selected_character", "_player_selected_character")
 	_connect_steam_signal("character_lobby_update", "_lobby_characters_updated")
@@ -36,6 +38,11 @@ func _ready():
 	
 	brotatogether_options = $"/root/BrotogetherOptions"
 	is_multiplayer_lobby = brotatogether_options.joining_multiplayer_lobby
+	_diag("ready lobby=%s current_mode=%s players=%s" % [
+		str(is_multiplayer_lobby),
+		str(current_mode),
+		str(RunData.get_player_count()),
+	])
 	
 	if is_multiplayer_lobby:
 		ProgressData.settings.coop_mode_toggled = true
@@ -69,13 +76,17 @@ func _ready():
 		
 		_update_username_labels()
 		lobby_member_count_at_scene_init = steam_connection.lobby_members.size()
+		var used_devices := {0: true}
 		
 		for member_index in steam_connection.lobby_members.size():
 			var member_id = steam_connection.lobby_members[member_index]
 			if member_id == steam_connection.steam_id:
 				CoopService._add_player(0, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+				_diag("add_player member=%s device=0 local=true" % str(member_index))
 			else:
-				CoopService._add_player(100 + member_index, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+				var remote_device = _allocate_remote_device(used_devices)
+				CoopService._add_player(remote_device, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+				_diag("add_player member=%s device=%s local=false" % [str(member_index), str(remote_device)])
 			
 		for character_data in _get_all_possible_elements(0):
 			selections_by_string_key[character_item_to_string(character_data)] = character_data
@@ -87,6 +98,28 @@ func _ready():
 				selections_by_string_key[character_item_to_string(character_data)] = character_data
 			else:
 				inventory_by_string_key[character_item_to_string(character_data.item)] = character_data
+	_diag("ready end")
+
+
+func _input(event: InputEvent) -> void:
+	var focus_owner = get_focus_owner()
+	if RunData.is_coop_run and RunData.get_player_count() == 0 and focus_owner == null and event.is_action_pressed("ui_up"):
+		_diag("input ui_up with zero players; schedule safe focus")
+		call_deferred("_safe_focus_coop_button")
+
+
+func _safe_focus_coop_button() -> void:
+	if not is_inside_tree():
+		_diag("safe_focus_coop_button skipped: scene out of tree")
+		return
+	if _coop_button == null or not is_instance_valid(_coop_button):
+		_diag("safe_focus_coop_button skipped: coop_button invalid")
+		return
+	if not _coop_button.is_inside_tree():
+		_diag("safe_focus_coop_button skipped: coop_button out of tree")
+		return
+	_coop_button.grab_focus()
+	_diag("safe_focus_coop_button done")
 
 
 func _exit_tree() -> void:
@@ -143,6 +176,7 @@ func _request_reload_after_lobby_update() -> void:
 
 func _reload_after_lobby_update() -> void:
 	lobby_reload_pending = false
+	_diag("reload_after_lobby_update")
 	reload_scene()
 
 
@@ -309,5 +343,18 @@ func _host_character_selection_complete(some_player_has_weapon_slots : bool, sel
 		_change_scene(MenuData.weapon_selection_scene)
 	else:
 		_change_scene(MenuData.difficulty_selection_scene)
+
+
+func _allocate_remote_device(used_devices: Dictionary) -> int:
+	for candidate in range(1, CoopService.REMAP_END):
+		if not used_devices.has(candidate):
+			used_devices[candidate] = true
+			return candidate
+	# Fallback на валидный action-суффикс, даже если устройств больше ожидаемого.
+	return 1
+
+
+func _diag(message: String) -> void:
+	DiagnosticsLogger.log_with_options(brotatogether_options, "CharacterSelectionExt", message)
 
 

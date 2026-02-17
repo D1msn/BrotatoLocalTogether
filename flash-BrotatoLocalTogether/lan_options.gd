@@ -13,9 +13,11 @@ const NETWORK_CONFIG_PATH := "user://brotato_local_together/network.cfg"
 const NETWORK_CONFIG_SECTION := "network"
 const DEFAULT_HOST_PORT := 24567
 const DEFAULT_SAFE_CORE_MODE := true
+const DEFAULT_DIAGNOSTICS_LOG_ENABLED := true
 
 var host_port : int = DEFAULT_HOST_PORT
 var core_safe_mode : bool = DEFAULT_SAFE_CORE_MODE
+var diagnostics_log_enabled : bool = DEFAULT_DIAGNOSTICS_LOG_ENABLED
 var preferred_advertise_ip : String = ""
 var last_join_endpoint : String = ""
 var local_username : String = ""
@@ -76,6 +78,10 @@ func set_preferred_advertise_ip(value: String) -> void:
 	preferred_advertise_ip = value.strip_edges()
 	_save_network_config()
 
+func set_diagnostics_log_enabled(value: bool) -> void:
+	diagnostics_log_enabled = value
+	_save_network_config()
+
 
 func set_session_credentials(session_id: String, player_token: String, host_endpoint: String) -> void:
 	last_session_id = session_id.strip_edges()
@@ -102,6 +108,7 @@ func _load_network_config() -> void:
 	host_port = int(config.get_value(NETWORK_CONFIG_SECTION, "host_port", DEFAULT_HOST_PORT))
 	host_port = clamp(host_port, 1024, 65535)
 	core_safe_mode = bool(config.get_value(NETWORK_CONFIG_SECTION, "core_safe_mode", DEFAULT_SAFE_CORE_MODE))
+	diagnostics_log_enabled = bool(config.get_value(NETWORK_CONFIG_SECTION, "diagnostics_log_enabled", DEFAULT_DIAGNOSTICS_LOG_ENABLED))
 
 	preferred_advertise_ip = String(config.get_value(NETWORK_CONFIG_SECTION, "preferred_advertise_ip", ""))
 	last_join_endpoint = String(config.get_value(NETWORK_CONFIG_SECTION, "last_join_endpoint", ""))
@@ -116,6 +123,7 @@ func _save_network_config() -> void:
 	var config := ConfigFile.new()
 	config.set_value(NETWORK_CONFIG_SECTION, "host_port", host_port)
 	config.set_value(NETWORK_CONFIG_SECTION, "core_safe_mode", core_safe_mode)
+	config.set_value(NETWORK_CONFIG_SECTION, "diagnostics_log_enabled", diagnostics_log_enabled)
 	config.set_value(NETWORK_CONFIG_SECTION, "preferred_advertise_ip", preferred_advertise_ip)
 	config.set_value(NETWORK_CONFIG_SECTION, "last_join_endpoint", last_join_endpoint)
 	config.set_value(NETWORK_CONFIG_SECTION, "local_username", local_username)
