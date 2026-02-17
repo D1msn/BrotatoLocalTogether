@@ -26,6 +26,17 @@ const ENVELOPE_KEY_TICK := "TICK"
 const ENVELOPE_KEY_SENT_AT_MSEC := "SENT_AT_MSEC"
 const ENVELOPE_KEY_PAYLOAD := "PAYLOAD"
 const LOG_NAME := "BrotatoLocalTogether:SessionConnection"
+const SCENE_TRANSITION_TIMEOUT_MSEC := 12000
+const SCENE_TRANSITION_RETRY_MSEC := 1000
+const SCENE_TRANSITION_ROLE_HOST := "host"
+const SCENE_TRANSITION_ROLE_CLIENT := "client"
+const SCENE_TRANSITION_KEY_ID := "TRANSITION_ID"
+const SCENE_TRANSITION_KEY_TARGET_SCENE := "TARGET_SCENE"
+const SCENE_TRANSITION_KEY_SOURCE_SCENE := "SOURCE_SCENE"
+const SCENE_TRANSITION_KEY_STARTED_AT_MSEC := "STARTED_AT_MSEC"
+const SCENE_TRANSITION_KEY_TIMEOUT_MSEC := "TIMEOUT_MSEC"
+const SCENE_TRANSITION_KEY_READY_SCENE := "READY_SCENE"
+const SCENE_TRANSITION_KEY_READY_AT_MSEC := "READY_AT_MSEC"
 
 var network_peer : NetworkedMultiplayerENet = null
 var session_persistence : Node = null
@@ -48,6 +59,17 @@ var last_rejection_reason : String = ""
 var pending_restore_snapshot : Dictionary = {}
 var pending_client_recovery_state : Dictionary = {}
 var attempted_tokenless_retry : bool = false
+var scene_transition_active : bool = false
+var scene_transition_role : String = ""
+var scene_transition_id : String = ""
+var scene_transition_target_scene : String = ""
+var scene_transition_source_scene : String = ""
+var scene_transition_started_msec : int = 0
+var scene_transition_deadline_msec : int = 0
+var scene_transition_last_prepare_sent_msec : int = 0
+var scene_transition_last_ready_sent_msec : int = 0
+var scene_transition_prepare_sender_id : int = -1
+var scene_transition_ready_by_peer : Dictionary = {}
 
 signal session_resume_available(session_id, expires_at_unix)
 signal session_resumed(session_id, player_slot)
@@ -73,6 +95,7 @@ func _ready() -> void:
 	pending_client_recovery_state.clear()
 	last_rejection_reason = ""
 	attempted_tokenless_retry = false
+	_reset_scene_transition_state()
 
 	session_persistence = SessionPersistence.new()
 	session_persistence.set_name("SessionPersistence")
@@ -98,7 +121,7 @@ func _ready() -> void:
 
 
 func _physics_process(_delta : float) -> void:
-	pass
+	_tick_scene_transition_state_machine()
 
 
 func _notification(what: int) -> void:
@@ -283,6 +306,7 @@ func leave_game_lobby() -> void:
 	attempted_tokenless_retry = false
 	host_endpoint = ""
 	pending_join_endpoint = ""
+	_reset_scene_transition_state()
 
 	var options = _get_options()
 	if options != null:
@@ -507,6 +531,12 @@ func _dispatch_incoming_packet(channel : int, data : Dictionary, sender_id : int
 		_receive_main_scene_client_discard_button_pressed(sender_id)
 	elif channel == MessageType.MESSAGE_TYPE_HOST_ENTERED_SHOP:
 		_receive_host_entered_shop()
+	elif channel == MessageType.MESSAGE_TYPE_SCENE_PREPARE:
+		_receive_scene_prepare(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SCENE_READY:
+		_receive_scene_ready(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SCENE_COMMIT:
+		_receive_scene_commit(data, sender_id)
 
 
 func _on_network_peer_connected(peer_id : int) -> void:
@@ -521,6 +551,12 @@ func _on_network_peer_disconnected(peer_id : int) -> void:
 	player_latencies.erase(peer_id)
 
 	if is_host():
+		if scene_transition_active and scene_transition_role == SCENE_TRANSITION_ROLE_HOST:
+			if scene_transition_ready_by_peer.has(peer_id):
+				scene_transition_ready_by_peer.erase(peer_id)
+			if _all_scene_transition_peers_ready():
+				_commit_scene_transition("peer_disconnected")
+
 		var player_token = String(token_by_peer_id.get(peer_id, ""))
 		if known_peer_names.has(peer_id):
 			known_peer_names.erase(peer_id)
@@ -551,6 +587,7 @@ func _on_network_peer_disconnected(peer_id : int) -> void:
 		return
 
 	if peer_id == game_lobby_owner_id:
+		_reset_scene_transition_state()
 		_push_system_message("Host left the lobby")
 		leave_game_lobby()
 		_go_to_multiplayer_menu()
@@ -572,6 +609,7 @@ func _on_connected_to_server() -> void:
 	if network_peer == null:
 		return
 	attempted_tokenless_retry = false
+	_reset_scene_transition_state()
 
 	steam_id = get_tree().get_network_unique_id()
 	game_lobby_id = ACTIVE_LOBBY_ID
@@ -924,6 +962,260 @@ func _is_session_bound_message(message_type: int) -> bool:
 	return true
 
 
+func start_scene_transition(target_scene_path: String) -> bool:
+	if not is_host():
+		return false
+
+	var normalized_target_scene = String(target_scene_path).strip_edges()
+	if normalized_target_scene.empty():
+		return false
+
+	if (
+		scene_transition_active and
+		scene_transition_role == SCENE_TRANSITION_ROLE_HOST and
+		scene_transition_target_scene == normalized_target_scene
+	):
+		return true
+
+	_reset_scene_transition_state()
+	scene_transition_active = true
+	scene_transition_role = SCENE_TRANSITION_ROLE_HOST
+	scene_transition_id = _generate_random_id()
+	scene_transition_target_scene = normalized_target_scene
+	scene_transition_source_scene = _current_scene_path()
+	scene_transition_started_msec = Time.get_ticks_msec()
+	scene_transition_deadline_msec = scene_transition_started_msec + SCENE_TRANSITION_TIMEOUT_MSEC
+	scene_transition_ready_by_peer[steam_id] = true
+
+	for peer_value in lobby_members:
+		var peer_id = int(peer_value)
+		if peer_id <= 0 or peer_id == steam_id:
+			continue
+		scene_transition_ready_by_peer[peer_id] = false
+
+	_send_scene_prepare_to_pending_peers(true)
+
+	if _all_scene_transition_peers_ready():
+		_commit_scene_transition("all_ready_initial")
+
+	return true
+
+
+func is_scene_transition_active() -> bool:
+	return scene_transition_active
+
+
+func _reset_scene_transition_state() -> void:
+	scene_transition_active = false
+	scene_transition_role = ""
+	scene_transition_id = ""
+	scene_transition_target_scene = ""
+	scene_transition_source_scene = ""
+	scene_transition_started_msec = 0
+	scene_transition_deadline_msec = 0
+	scene_transition_last_prepare_sent_msec = 0
+	scene_transition_last_ready_sent_msec = 0
+	scene_transition_prepare_sender_id = -1
+	scene_transition_ready_by_peer.clear()
+
+
+func _tick_scene_transition_state_machine() -> void:
+	if not scene_transition_active:
+		return
+
+	var now_msec = Time.get_ticks_msec()
+
+	if scene_transition_role == SCENE_TRANSITION_ROLE_HOST:
+		if _all_scene_transition_peers_ready():
+			_commit_scene_transition("all_ready")
+			return
+
+		if now_msec - scene_transition_last_prepare_sent_msec >= SCENE_TRANSITION_RETRY_MSEC:
+			_send_scene_prepare_to_pending_peers(false)
+
+		if now_msec >= scene_transition_deadline_msec:
+			_commit_scene_transition("timeout")
+		return
+
+	if scene_transition_role == SCENE_TRANSITION_ROLE_CLIENT:
+		if scene_transition_prepare_sender_id <= 0:
+			return
+
+		if now_msec - scene_transition_last_ready_sent_msec >= SCENE_TRANSITION_RETRY_MSEC:
+			_send_scene_ready(scene_transition_prepare_sender_id)
+
+
+func _all_scene_transition_peers_ready() -> bool:
+	if scene_transition_ready_by_peer.empty():
+		return true
+
+	for peer_id in scene_transition_ready_by_peer.keys():
+		if not bool(scene_transition_ready_by_peer[peer_id]):
+			return false
+	return true
+
+
+func _scene_transition_prepare_payload() -> Dictionary:
+	return {
+		SCENE_TRANSITION_KEY_ID: scene_transition_id,
+		SCENE_TRANSITION_KEY_TARGET_SCENE: scene_transition_target_scene,
+		SCENE_TRANSITION_KEY_SOURCE_SCENE: scene_transition_source_scene,
+		SCENE_TRANSITION_KEY_STARTED_AT_MSEC: scene_transition_started_msec,
+		SCENE_TRANSITION_KEY_TIMEOUT_MSEC: SCENE_TRANSITION_TIMEOUT_MSEC,
+	}
+
+
+func _send_scene_prepare_to_pending_peers(send_all: bool) -> void:
+	if not scene_transition_active or scene_transition_role != SCENE_TRANSITION_ROLE_HOST:
+		return
+
+	var payload = _scene_transition_prepare_payload()
+	if send_all:
+		send_p2p_packet(payload, MessageType.MESSAGE_TYPE_SCENE_PREPARE)
+	else:
+		for peer_id_value in scene_transition_ready_by_peer.keys():
+			var peer_id = int(peer_id_value)
+			if peer_id <= 0 or peer_id == steam_id:
+				continue
+			if bool(scene_transition_ready_by_peer[peer_id]):
+				continue
+			send_p2p_packet(payload, MessageType.MESSAGE_TYPE_SCENE_PREPARE, peer_id)
+
+	scene_transition_last_prepare_sent_msec = Time.get_ticks_msec()
+
+
+func _send_scene_ready(target_peer_id: int) -> void:
+	if not scene_transition_active or scene_transition_role != SCENE_TRANSITION_ROLE_CLIENT:
+		return
+	if target_peer_id <= 0:
+		return
+	if scene_transition_id.empty():
+		return
+
+	var payload = {
+		SCENE_TRANSITION_KEY_ID: scene_transition_id,
+		SCENE_TRANSITION_KEY_READY_SCENE: _current_scene_path(),
+		SCENE_TRANSITION_KEY_READY_AT_MSEC: Time.get_ticks_msec(),
+	}
+	send_p2p_packet(payload, MessageType.MESSAGE_TYPE_SCENE_READY, target_peer_id)
+	scene_transition_last_ready_sent_msec = Time.get_ticks_msec()
+
+
+func _commit_scene_transition(_reason: String) -> void:
+	if not scene_transition_active or scene_transition_role != SCENE_TRANSITION_ROLE_HOST:
+		return
+
+	var payload = {
+		SCENE_TRANSITION_KEY_ID: scene_transition_id,
+		SCENE_TRANSITION_KEY_TARGET_SCENE: scene_transition_target_scene,
+		SCENE_TRANSITION_KEY_SOURCE_SCENE: scene_transition_source_scene,
+		SCENE_TRANSITION_KEY_STARTED_AT_MSEC: scene_transition_started_msec,
+	}
+	send_p2p_packet(payload, MessageType.MESSAGE_TYPE_SCENE_COMMIT)
+	_apply_scene_commit(scene_transition_target_scene)
+	_reset_scene_transition_state()
+
+
+func _receive_scene_prepare(data: Dictionary, sender_id: int) -> void:
+	if is_host():
+		return
+	if sender_id != game_lobby_owner_id:
+		return
+
+	var transition_id = String(data.get(SCENE_TRANSITION_KEY_ID, "")).strip_edges()
+	var target_scene = String(data.get(SCENE_TRANSITION_KEY_TARGET_SCENE, "")).strip_edges()
+	if transition_id.empty() or target_scene.empty():
+		return
+
+	var timeout_msec = int(data.get(SCENE_TRANSITION_KEY_TIMEOUT_MSEC, SCENE_TRANSITION_TIMEOUT_MSEC))
+	timeout_msec = int(clamp(timeout_msec, 10000, 15000))
+	var now_msec = Time.get_ticks_msec()
+
+	var is_same_transition = (
+		scene_transition_active and
+		scene_transition_role == SCENE_TRANSITION_ROLE_CLIENT and
+		scene_transition_id == transition_id and
+		scene_transition_target_scene == target_scene
+	)
+
+	if not is_same_transition:
+		scene_transition_active = true
+		scene_transition_role = SCENE_TRANSITION_ROLE_CLIENT
+		scene_transition_id = transition_id
+		scene_transition_target_scene = target_scene
+		scene_transition_source_scene = String(data.get(SCENE_TRANSITION_KEY_SOURCE_SCENE, ""))
+		scene_transition_started_msec = now_msec
+	scene_transition_deadline_msec = now_msec + timeout_msec
+
+	scene_transition_prepare_sender_id = sender_id
+	_send_scene_ready(scene_transition_prepare_sender_id)
+
+
+func _receive_scene_ready(data: Dictionary, sender_id: int) -> void:
+	if not is_host():
+		return
+	if not scene_transition_active or scene_transition_role != SCENE_TRANSITION_ROLE_HOST:
+		return
+
+	var transition_id = String(data.get(SCENE_TRANSITION_KEY_ID, "")).strip_edges()
+	if transition_id.empty() or transition_id != scene_transition_id:
+		return
+
+	if sender_id > 0:
+		scene_transition_ready_by_peer[sender_id] = true
+
+	if _all_scene_transition_peers_ready():
+		_commit_scene_transition("all_ready_ack")
+
+
+func _receive_scene_commit(data: Dictionary, sender_id: int) -> void:
+	if sender_id != game_lobby_owner_id and sender_id != steam_id:
+		return
+
+	var target_scene = String(data.get(SCENE_TRANSITION_KEY_TARGET_SCENE, "")).strip_edges()
+	if target_scene.empty():
+		return
+
+	var transition_id = String(data.get(SCENE_TRANSITION_KEY_ID, "")).strip_edges()
+	if is_host() and scene_transition_active and scene_transition_role == SCENE_TRANSITION_ROLE_HOST:
+		if transition_id == scene_transition_id:
+			return
+
+	_apply_scene_commit(target_scene)
+	_reset_scene_transition_state()
+
+
+func _current_scene_path() -> String:
+	if not is_inside_tree():
+		return ""
+
+	var tree = get_tree()
+	if tree == null or tree.current_scene == null:
+		return ""
+
+	var scene_path = String(tree.current_scene.filename).strip_edges()
+	if not scene_path.empty():
+		return scene_path
+	return String(tree.current_scene.name).strip_edges()
+
+
+func _apply_scene_commit(target_scene: String) -> void:
+	if target_scene.empty():
+		return
+	if not is_inside_tree():
+		return
+
+	var tree = get_tree()
+	if tree == null:
+		return
+	if tree.current_scene != null:
+		var current_scene_path = String(tree.current_scene.filename).strip_edges()
+		if current_scene_path == target_scene:
+			return
+
+	var _scene_error = tree.change_scene(target_scene)
+
+
 func _send_rpc_packet(target_peer_id: int, message_type: int, compressed_data: PoolByteArray) -> void:
 	if target_peer_id <= 0:
 		return
@@ -1035,6 +1327,12 @@ func _is_reliable_message(message_type: int) -> bool:
 		MessageType.MESSAGE_TYPE_MAIN_SCENE_TAKE_BUTTON_PRESSED:
 			return true
 		MessageType.MESSAGE_TYPE_MAIN_SCENE_DISCARD_BUTTON_PRESSED:
+			return true
+		MessageType.MESSAGE_TYPE_SCENE_PREPARE:
+			return true
+		MessageType.MESSAGE_TYPE_SCENE_READY:
+			return true
+		MessageType.MESSAGE_TYPE_SCENE_COMMIT:
 			return true
 	return false
 

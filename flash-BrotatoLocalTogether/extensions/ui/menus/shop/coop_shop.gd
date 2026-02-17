@@ -50,7 +50,12 @@ func _ready():
 			_connect_network_signal(signal_info[0], signal_info[1])
 		
 		if steam_connection.is_host():
-			steam_connection.send_host_entered_shop()
+			if steam_connection.has_method("start_scene_transition"):
+				var started = bool(steam_connection.start_scene_transition(RunData.get_shop_scene_path()))
+				if not started:
+					steam_connection.send_host_entered_shop()
+			else:
+				steam_connection.send_host_entered_shop()
 
 
 func _exit_tree() -> void:

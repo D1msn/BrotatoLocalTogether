@@ -382,9 +382,9 @@ func _on_selections_completed() -> void:
 	
 	steam_connection.send_character_selection_completed(RunData.some_player_has_weapon_slots(), currently_focused_characters)
 	if RunData.some_player_has_weapon_slots():
-		_change_scene(MenuData.weapon_selection_scene)
+		_request_host_scene_transition(MenuData.weapon_selection_scene)
 	else:
-		_change_scene(MenuData.difficulty_selection_scene)
+		_request_host_scene_transition(MenuData.difficulty_selection_scene)
 	
 
 func _host_character_selection_complete(some_player_has_weapon_slots : bool, selected_characters : Array) -> void:
@@ -396,11 +396,35 @@ func _host_character_selection_complete(some_player_has_weapon_slots : bool, sel
 	for player_index in RunData.get_player_count():
 		var character = _player_characters[player_index]
 		RunData.add_character(character, player_index)
-	
-	if some_player_has_weapon_slots:
-		_change_scene(MenuData.weapon_selection_scene)
-	else:
-		_change_scene(MenuData.difficulty_selection_scene)
+
+	# В мультиплеере переход выполняется через SCENE_PREPARE/READY/COMMIT.
+	# Клиенты ждут commit от хоста, чтобы не расходиться по сценам.
+	if not is_multiplayer_lobby:
+		if some_player_has_weapon_slots:
+			_change_scene(MenuData.weapon_selection_scene)
+		else:
+			_change_scene(MenuData.difficulty_selection_scene)
+
+
+func _request_host_scene_transition(target_scene: String) -> void:
+	var normalized_target = String(target_scene).strip_edges()
+	if normalized_target.empty():
+		return
+
+	if not is_multiplayer_lobby:
+		_change_scene(normalized_target)
+		return
+	if steam_connection == null:
+		_change_scene(normalized_target)
+		return
+	if not steam_connection.is_host():
+		return
+	if steam_connection.has_method("start_scene_transition"):
+		var started = bool(steam_connection.start_scene_transition(normalized_target))
+		if started:
+			return
+
+	_change_scene(normalized_target)
 
 
 func _allocate_remote_device(used_devices: Dictionary) -> int:

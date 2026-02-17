@@ -97,6 +97,15 @@ enum MessageType {
 	MESSAGE_TYPE_MAIN_SCENE_DISCARD_BUTTON_PRESSED,
 	
 	MESSAGE_TYPE_HOST_ENTERED_SHOP,
+	
+	# Host announces upcoming scene transition and waits for client READY.
+	MESSAGE_TYPE_SCENE_PREPARE,
+	
+	# Client acknowledges readiness for scene transition.
+	MESSAGE_TYPE_SCENE_READY,
+	
+	# Host commits synchronized scene transition.
+	MESSAGE_TYPE_SCENE_COMMIT,
 }
 
 var global_chat_lobby_id : int = -1

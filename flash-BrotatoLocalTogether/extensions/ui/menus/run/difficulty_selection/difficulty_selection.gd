@@ -49,20 +49,82 @@ func _on_element_pressed(element: InventoryElement, _inventory_player_index: int
 	if is_multiplayer_lobby:
 		if not steam_connection.is_host():
 			return
-	
-	._on_element_pressed(element, _inventory_player_index)
-	
-	if is_multiplayer_lobby:
+		if not _apply_host_difficulty_selection(element):
+			return
 		steam_connection.difficulty_pressed()
+		_request_host_scene_transition(MenuData.game_scene)
+		return
+
+	._on_element_pressed(element, _inventory_player_index)
 
 
 func _difficulty_selected(difficutly : int) -> void:
+	if is_multiplayer_lobby:
+		RunData.current_difficulty = difficutly
+		return
+
 	if not _can_use_tree():
 		return
 	var tree = get_tree()
 	if tree == null:
 		return
 	var _error = tree.change_scene(MenuData.game_scene)
+
+
+func _apply_host_difficulty_selection(element: InventoryElement) -> bool:
+	if difficulty_selected:
+		return false
+	if element == null or element.is_special:
+		return false
+
+	difficulty_selected = true
+	RunData.current_difficulty = element.item.value
+	RunData.reset_elites_spawn()
+	RunData.init_elites_spawn()
+	RunData.enabled_dlcs = ProgressData.get_active_dlc_ids()
+	ProgressData.save()
+
+	for effect in element.item.effects:
+		effect.apply(0)
+
+	for player_index in range(RunData.get_player_count()):
+		var player_run_data = RunData.players_data[player_index]
+		player_run_data.uses_ban = RunData.is_ban_mode_active
+		player_run_data.remaining_ban_token = RunData.BAN_MAX_TOKEN
+
+	RunData.init_bosses_spawn()
+	RunData.current_run_accessibility_settings = ProgressData.settings.enemy_scaling.duplicate()
+	ProgressData.load_status = LoadStatus.SAVE_OK
+	ProgressData.increment_stat("run_started")
+	ProgressData.data["chal_hourglass_quit_wave"] = false
+	return true
+
+
+func _request_host_scene_transition(target_scene: String) -> void:
+	var normalized_target = String(target_scene).strip_edges()
+	if normalized_target.empty():
+		return
+
+	if not is_multiplayer_lobby:
+		var tree = get_tree()
+		if tree != null:
+			var _error = tree.change_scene(normalized_target)
+		return
+	if steam_connection == null:
+		var fallback_tree = get_tree()
+		if fallback_tree != null:
+			var _fallback_error = fallback_tree.change_scene(normalized_target)
+		return
+	if not steam_connection.is_host():
+		return
+	if steam_connection.has_method("start_scene_transition"):
+		var started = bool(steam_connection.start_scene_transition(normalized_target))
+		if started:
+			return
+
+	var tree = get_tree()
+	if tree != null:
+		var _error = tree.change_scene(normalized_target)
 
 
 func _difficulty_focused(difficutly : int) -> void:

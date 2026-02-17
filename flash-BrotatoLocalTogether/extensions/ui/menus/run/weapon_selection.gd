@@ -150,7 +150,7 @@ func _on_selections_completed() -> void:
 	
 	steam_connection.send_weapon_selection_completed(all_selected_weapons)
 	
-	_change_scene(MenuData.difficulty_selection_scene)
+	_request_host_scene_transition(MenuData.difficulty_selection_scene)
 
 
 func _weapon_selection_completed(selected_weapons : Array) -> void:
@@ -158,5 +158,28 @@ func _weapon_selection_completed(selected_weapons : Array) -> void:
 		RunData.players_data[player_index].weapons.clear()
 		for weapon_index in selected_weapons[player_index].size():
 			RunData.players_data[player_index].weapons.push_back(selections_by_string_key[selected_weapons[player_index][weapon_index]])
-	
-	_change_scene(MenuData.difficulty_selection_scene)
+
+	# В мультиплеере переход делается централизованно через SCENE_COMMIT.
+	if not is_multiplayer_lobby:
+		_change_scene(MenuData.difficulty_selection_scene)
+
+
+func _request_host_scene_transition(target_scene: String) -> void:
+	var normalized_target = String(target_scene).strip_edges()
+	if normalized_target.empty():
+		return
+
+	if not is_multiplayer_lobby:
+		_change_scene(normalized_target)
+		return
+	if steam_connection == null:
+		_change_scene(normalized_target)
+		return
+	if not steam_connection.is_host():
+		return
+	if steam_connection.has_method("start_scene_transition"):
+		var started = bool(steam_connection.start_scene_transition(normalized_target))
+		if started:
+			return
+
+	_change_scene(normalized_target)

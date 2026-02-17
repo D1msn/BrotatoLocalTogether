@@ -1535,6 +1535,11 @@ func _client_discard_button_pressed(player_index : int) -> void:
 
 
 func _host_entered_shop() -> void:
+	# Legacy fallback: в актуальном протоколе переход выполняется через
+	# SCENE_PREPARE/READY/COMMIT. Если переход уже активен, не дублируем смену сцены.
+	if steam_connection != null and steam_connection.has_method("is_scene_transition_active"):
+		if bool(steam_connection.is_scene_transition_active()):
+			return
 	_change_scene(RunData.get_shop_scene_path())
 
 
