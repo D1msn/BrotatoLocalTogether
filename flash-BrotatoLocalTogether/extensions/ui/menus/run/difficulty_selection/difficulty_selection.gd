@@ -10,8 +10,8 @@ var selection_by_string_key : Dictionary
 
 func _ready():
 	steam_connection = $"/root/NetworkConnection"
-	steam_connection.connect("difficulty_focused", self, "_difficulty_focused")
-	steam_connection.connect("difficulty_selected", self, "_difficulty_selected")
+	_connect_network_signal("difficulty_focused", "_difficulty_focused")
+	_connect_network_signal("difficulty_selected", "_difficulty_selected")
 	
 	brotatogether_options = $"/root/BrotogetherOptions"
 	is_multiplayer_lobby = brotatogether_options.joining_multiplayer_lobby
@@ -25,6 +25,11 @@ func _ready():
 		
 		for inventory_item in _get_inventories()[0].get_children():
 			inventory_by_string_key[inventory_item.item.value] = inventory_item
+
+
+func _exit_tree() -> void:
+	_disconnect_network_signal("difficulty_focused", "_difficulty_focused")
+	_disconnect_network_signal("difficulty_selected", "_difficulty_selected")
 
 
 func _on_element_focused(element:InventoryElement, inventory_player_index:int, _displayPanelData: bool = true) -> void:
@@ -52,10 +57,17 @@ func _on_element_pressed(element: InventoryElement, _inventory_player_index: int
 
 
 func _difficulty_selected(difficutly : int) -> void:
-	var _error = get_tree().change_scene(MenuData.game_scene)
+	if not _can_use_tree():
+		return
+	var tree = get_tree()
+	if tree == null:
+		return
+	var _error = tree.change_scene(MenuData.game_scene)
 
 
 func _difficulty_focused(difficutly : int) -> void:
+	if not is_inside_tree():
+		return
 	
 	# Hosts don't respect update calls
 	if is_multiplayer_lobby:
@@ -71,3 +83,25 @@ func _difficulty_focused(difficutly : int) -> void:
 	if selected_item != null:
 		_get_panels()[0].visible = true
 		_get_panels()[0].set_data(selected_item, 0)
+
+
+func _connect_network_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	if steam_connection.is_connected(signal_name, self, method_name):
+		return
+	var _connect_error = steam_connection.connect(signal_name, self, method_name)
+
+
+func _disconnect_network_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	if not steam_connection.is_connected(signal_name, self, method_name):
+		return
+	steam_connection.disconnect(signal_name, self, method_name)
+
+
+func _can_use_tree() -> bool:
+	if not is_inside_tree():
+		return false
+	return get_tree() != null

@@ -36,7 +36,12 @@ func init() -> void:
 
 
 func _on_MultiplayerButton_pressed():
-	var _error = get_tree().change_scene("res://mods-unpacked/flash-BrotatoLocalTogether/ui/multiplayer_menu.tscn")
+	if not is_inside_tree():
+		return
+	var tree = get_tree()
+	if tree == null:
+		return
+	var _error = tree.change_scene("res://mods-unpacked/flash-BrotatoLocalTogether/ui/multiplayer_menu.tscn")
 
 func remove_game_controller():
 	if $"/root".has_node("GameController"):

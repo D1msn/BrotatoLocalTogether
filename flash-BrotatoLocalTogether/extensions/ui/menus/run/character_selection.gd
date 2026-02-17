@@ -210,8 +210,11 @@ func _player_selected_character(player_index : int) -> void:
 func reload_scene() -> void:
 	if not is_inside_tree():
 		return
+	var tree = get_tree()
+	if tree == null:
+		return
 	$"/root/BrotogetherOptions".joining_multiplayer_lobby = true
-	var _error = get_tree().change_scene(MenuData.character_selection_scene)
+	var _error = tree.change_scene(MenuData.character_selection_scene)
 
 
 func _lobby_characters_updated(player_characters : Array, has_player_selected : Array) -> void:

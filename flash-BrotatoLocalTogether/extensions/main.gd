@@ -1489,7 +1489,7 @@ func connect_visual_effects(unit: Unit)->void :
 			var _error_floating_text = unit.connect("took_damage", self, "_on_unit_took_damage")
 
 
-func _on_unit_took_damage(unit: Unit, value: int, _knockback_direction: Vector2, is_crit: bool, is_dodge: bool, is_protected: bool, armor_did_something: bool, _args: TakeDamageArgs, _hit_type: int)->void :
+func _on_unit_took_damage(unit: Unit, value: int, _knockback_direction: Vector2, is_crit: bool, is_dodge: bool, is_protected: bool, armor_did_something: bool, _args: TakeDamageArgs, _hit_type: int, _is_one_shot: bool = false)->void :
 	var color: Color = Color.white
 	var text = str(value)
 
