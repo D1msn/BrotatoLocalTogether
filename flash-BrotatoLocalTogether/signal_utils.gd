@@ -1,4 +1,5 @@
 extends Reference
+class_name SignalUtils
 
 
 static func safe_connect(source: Object, signal_name: String, target: Object, method: String, binds: Array = [], flags: int = 0) -> int:

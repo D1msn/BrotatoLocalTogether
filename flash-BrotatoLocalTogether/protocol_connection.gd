@@ -459,7 +459,18 @@ func read_p2p_packet() -> void:
 				continue
 			
 			var sender_id : int = packet["remote_steam_id"]
-			var decoded_payload = bytes2var(packet["data"].decompress_dynamic(-1, File.COMPRESSION_GZIP))
+			var compressed_packet_data = packet.get("data", PoolByteArray())
+			if not (compressed_packet_data is PoolByteArray):
+				packet_size = Steam.getAvailableP2PPacketSize(channel)
+				continue
+			var unpacked_data: PoolByteArray = compressed_packet_data.decompress_dynamic(-1, File.COMPRESSION_GZIP)
+			if unpacked_data.size() <= 0:
+				packet_size = Steam.getAvailableP2PPacketSize(channel)
+				continue
+			var decoded_payload = bytes2var(unpacked_data)
+			if not (decoded_payload is Dictionary):
+				packet_size = Steam.getAvailableP2PPacketSize(channel)
+				continue
 			var parsed_packet = _parse_received_packet(channel, decoded_payload, sender_id)
 			if not bool(parsed_packet.get("ok", false)):
 				packet_size = Steam.getAvailableP2PPacketSize(channel)
