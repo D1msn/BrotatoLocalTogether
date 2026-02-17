@@ -1,6 +1,6 @@
 class_name InterpolationBuffer
 
-const RENDER_DELAY_MSEC := 100
+const RENDER_DELAY_MSEC := 80
 const MAX_SNAPSHOTS := 20
 
 var _buffer : Array = []

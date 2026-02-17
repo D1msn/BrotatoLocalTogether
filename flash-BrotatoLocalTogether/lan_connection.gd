@@ -789,6 +789,7 @@ func _on_network_peer_disconnected(peer_id : int) -> void:
 	player_latencies.erase(peer_id)
 	if _last_seq_by_peer.has(peer_id):
 		_last_seq_by_peer.erase(peer_id)
+	_reset_interpolation_for_scene_entities()
 
 	if is_host():
 		if scene_transition_active and scene_transition_role == SCENE_TRANSITION_ROLE_HOST:
@@ -1329,6 +1330,11 @@ func _tick_scene_transition_state_machine() -> void:
 			_send_scene_prepare_to_pending_peers(false)
 
 		if now_msec >= scene_transition_deadline_msec:
+			ModLoaderLog.warning(
+				"Scene transition timeout after %d ms (id=%s, target=%s)"
+				% [max(0, now_msec - scene_transition_started_msec), scene_transition_id, scene_transition_target_scene],
+				LOG_NAME
+			)
 			_commit_scene_transition("timeout")
 		return
 
@@ -1363,6 +1369,25 @@ func _is_peer_in_lobby_members(peer_id: int) -> bool:
 		if int(member) == peer_id:
 			return true
 	return false
+
+
+func _reset_interpolation_for_scene_entities() -> void:
+	if not is_inside_tree():
+		return
+	var tree = get_tree()
+	if tree == null or tree.current_scene == null:
+		return
+	_reset_interpolation_for_node(tree.current_scene)
+
+
+func _reset_interpolation_for_node(node: Node) -> void:
+	if node == null:
+		return
+	if node.has_method("reset_interpolation"):
+		node.call_deferred("reset_interpolation")
+	for child in node.get_children():
+		if child is Node:
+			_reset_interpolation_for_node(child)
 
 
 func _scene_transition_prepare_payload() -> Dictionary:

@@ -35,6 +35,10 @@ var _interp_buffer = InterpolationBuffer.new()
 var _interp_position_ready: bool = false
 
 
+func reset_interpolation() -> void:
+	_reset_interpolation()
+
+
 func _reset_interpolation() -> void:
 	_interp_buffer.clear()
 	_interp_position_ready = false
@@ -75,6 +79,7 @@ func flash()->void :
 
 
 func die(args: = Entity.DieArgs.new())->void :
+	reset_interpolation()
 	if self.in_multiplayer_game and self.is_host:
 		self.brotatogether_options.batched_enemy_deaths[self.network_id] = true
 	.die(args)
