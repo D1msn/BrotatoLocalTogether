@@ -97,6 +97,10 @@
 - Результат: запускаются базовые скрипты без LAN safety-fallback (в т.ч. фокус/scene lifecycle), появляются ошибки типа `Focus emulator signal not triggered`.
 - Текущий безопасный дефолт: `extension_rollout_count=-1` и миграция legacy-конфига при загрузке.
 
+7. В `CharacterSelection` нельзя допускать промежуточный `player_count=0` при пересборке lobby-слотов.
+- Базовый код Godot UI в этот момент может успеть сделать deferred `grab_focus` и словить `!is_inside_tree`.
+- Для LAN-лобби обновление `CoopService.connected_players` нужно применять атомарно (одним `emit_signal`), без цепочки `clear_coop_players() -> _add_player() ...`.
+
 ## Приоритет внедрения (практический)
 
 ### P0 (сначала)

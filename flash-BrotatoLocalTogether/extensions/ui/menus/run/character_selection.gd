@@ -65,7 +65,8 @@ func _ready():
 		ProgressData.settings.coop_mode_toggled = true
 		var need_coop_mode = current_mode != RunData.PlayMode.COOP
 		if need_coop_mode:
-			_play_mode_init(RunData.PlayMode.COOP, false)
+			# initialize=true: избегаем промежуточного clear_coop_players() в базовом коде.
+			_play_mode_init(RunData.PlayMode.COOP, true)
 
 		_coop_button.hide()
 		var run_options_top_panel = _run_options_panel.get_node("MarginContainer/VBoxContainer/HBoxContainer")
@@ -119,6 +120,16 @@ func _input(event: InputEvent) -> void:
 	if RunData.is_coop_run and RunData.get_player_count() == 0 and focus_owner == null and event.is_action_pressed("ui_up"):
 		_diag("input ui_up with zero players; schedule safe focus")
 		call_deferred("_safe_focus_coop_button")
+
+
+func _play_mode_init(mode: int, initialize: bool) -> void:
+	var effective_initialize = initialize
+	if is_multiplayer_lobby and not initialize and mode == current_mode:
+		# Базовый CharacterSelection при mode==current_mode всё равно делает clear_coop_players(),
+		# что даёт краткий player_count=0 и гонку вокруг deferred focus.
+		effective_initialize = true
+		_diag("play_mode_init adjusted: mode=%s initialize=false -> true" % str(mode))
+	._play_mode_init(mode, effective_initialize)
 
 
 func _safe_focus_coop_button() -> void:
@@ -181,27 +192,44 @@ func _on_lobby_players_updated() -> void:
 
 func _sync_coop_players_with_lobby() -> void:
 	set_process_input(false)
-	CoopService.clear_coop_players()
 	var used_devices := {0: true}
 	var local_added := false
+	var target_connected_players: Array = []
 
 	for member_index in range(steam_connection.lobby_members.size()):
 		var member_id = steam_connection.lobby_members[member_index]
 		if member_id == steam_connection.steam_id:
-			CoopService._add_player(0, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+			target_connected_players.push_back([0, MULTIPLAYER_CLIENT_PLAYER_TYPE])
 			local_added = true
 			_diag("add_player member=%s device=0 local=true" % str(member_index))
 		else:
 			var remote_device = _allocate_remote_device(used_devices)
-			CoopService._add_player(remote_device, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+			target_connected_players.push_back([remote_device, MULTIPLAYER_CLIENT_PLAYER_TYPE])
 			_diag("add_player member=%s device=%s local=false" % [str(member_index), str(remote_device)])
 
 	if not local_added:
-		CoopService._add_player(0, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+		target_connected_players.push_back([0, MULTIPLAYER_CLIENT_PLAYER_TYPE])
 		_diag("add_player local fallback device=0")
+
+	_apply_connected_players(target_connected_players)
 
 	if _input_ready:
 		set_process_input(true)
+
+
+func _apply_connected_players(target_connected_players: Array) -> void:
+	if _connected_players_equal(CoopService.connected_players, target_connected_players):
+		_diag("sync_players skipped: connected_players unchanged")
+		return
+
+	# Применяем одним обновлением, чтобы не провоцировать промежуточный player_count=0.
+	CoopService.connected_players = target_connected_players.duplicate(true)
+	CoopService.emit_signal("connected_players_updated", CoopService.connected_players)
+	_diag("sync_players applied: count=%s" % str(CoopService.connected_players.size()))
+
+
+func _connected_players_equal(current_players: Array, target_players: Array) -> bool:
+	return to_json(current_players) == to_json(target_players)
 
 
 func _update_username_labels() -> void:
