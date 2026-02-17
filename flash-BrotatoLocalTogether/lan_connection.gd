@@ -935,8 +935,14 @@ func _send_rpc_packet(target_peer_id: int, message_type: int, compressed_data: P
 		transfer_channel = 1
 	if transfer_channel != previous_channel:
 		network_peer.transfer_channel = transfer_channel
-	if _is_unreliable_message(message_type) and has_method("rpc_unreliable_id"):
+	var is_unreliable = _is_unreliable_message(message_type)
+	var is_reliable = _is_reliable_message(message_type)
+	if is_unreliable and is_reliable:
+		is_unreliable = false
+	if is_unreliable and has_method("rpc_unreliable_id"):
 		rpc_unreliable_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
+	elif is_reliable:
+		rpc_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
 	else:
 		rpc_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
 	if int(network_peer.transfer_channel) != previous_channel:
@@ -963,11 +969,72 @@ func _is_unreliable_message(message_type: int) -> bool:
 			return true
 		MessageType.MESSAGE_TYPE_SHOP_INVENTORY_ITEM_FOCUS:
 			return true
+		MessageType.MESSAGE_TYPE_SHOP_GO_BUTTON_UPDATED:
+			return true
 		MessageType.MESSAGE_TYPE_CLIENT_POSITION:
 			return true
 		MessageType.MESSAGE_TYPE_CLIENT_FOCUS_MAIN_SCENE:
 			return true
 		MessageType.MESSAGE_TYPE_MAIN_STATE:
+			return true
+	return false
+
+
+func _is_reliable_message(message_type: int) -> bool:
+	match message_type:
+		SESSION_MESSAGE_REGISTER_CLIENT:
+			return true
+		SESSION_MESSAGE_REGISTER_ACK:
+			return true
+		SESSION_MESSAGE_REGISTER_REJECT:
+			return true
+		SESSION_MESSAGE_LOBBY_SYNC:
+			return true
+		SESSION_MESSAGE_RECOVERY_STATE:
+			return true
+		MessageType.MESSAGE_TYPE_CHARACTER_SELECTED:
+			return true
+		MessageType.MESSAGE_TYPE_WEAPON_SELECTED:
+			return true
+		MessageType.MESSAGE_TYPE_DIFFICULTY_PRESSED:
+			return true
+		MessageType.MESSAGE_TYPE_CHARACTER_LOBBY_UPDATE:
+			return true
+		MessageType.MESSAGE_TYPE_WEAPON_LOBBY_UPDATE:
+			return true
+		MessageType.MESSAGE_TYPE_CHARACTER_SELECTION_COMPLETED:
+			return true
+		MessageType.MESSAGE_TYPE_WEAPON_SELECTION_COMPLETED:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_BUY_ITEM:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_LOCK_ITEM:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_UNLOCK_ITEM:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_REROLL:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_COMBINE_WEAPON:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_WEAPON_DISCARD:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_LOBBY_UPDATE:
+			return true
+		MessageType.MESSAGE_TYPE_HOST_ROUND_START:
+			return true
+		MessageType.MESSAGE_TYPE_HOST_ENTERED_SHOP:
+			return true
+		MessageType.MESSAGE_TYPE_SHOP_CLOSE_POPUP:
+			return true
+		MessageType.MESSAGE_TYPE_LEAVE_SHOP:
+			return true
+		MessageType.MESSAGE_TYPE_MAIN_SCENE_REROLL_BUTTON_PRESSED:
+			return true
+		MessageType.MESSAGE_TYPE_MAIN_SCENE_CHOOSE_UPGRADE_PRESSED:
+			return true
+		MessageType.MESSAGE_TYPE_MAIN_SCENE_TAKE_BUTTON_PRESSED:
+			return true
+		MessageType.MESSAGE_TYPE_MAIN_SCENE_DISCARD_BUTTON_PRESSED:
 			return true
 	return false
 
