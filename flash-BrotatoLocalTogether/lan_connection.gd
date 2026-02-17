@@ -1498,26 +1498,38 @@ func _apply_scene_commit(target_scene: String) -> void:
 func _send_rpc_packet(target_peer_id: int, message_type: int, packet_data: PoolByteArray) -> void:
 	if target_peer_id <= 0:
 		return
+	if network_peer == null:
+		return
+
 	var previous_channel = int(network_peer.transfer_channel)
 	if previous_channel <= 0:
 		previous_channel = 1
+	var previous_mode = int(network_peer.transfer_mode)
+	if previous_mode < 0:
+		previous_mode = NetworkedMultiplayerPeer.TRANSFER_MODE_RELIABLE
+
 	var transfer_channel = _transfer_channel_for_message(message_type)
 	if transfer_channel <= 0:
 		transfer_channel = 1
-	if transfer_channel != previous_channel:
-		network_peer.transfer_channel = transfer_channel
+
 	var is_unreliable = _is_unreliable_message(message_type)
 	var is_reliable = _is_reliable_message(message_type)
 	if is_unreliable and is_reliable:
 		is_unreliable = false
-	if is_unreliable and has_method("rpc_unreliable_id"):
-		rpc_unreliable_id(target_peer_id, "_receive_enet_packet", message_type, packet_data)
-	elif is_reliable:
-		rpc_id(target_peer_id, "_receive_enet_packet", message_type, packet_data)
-	else:
-		rpc_id(target_peer_id, "_receive_enet_packet", message_type, packet_data)
+
+	var transfer_mode = NetworkedMultiplayerPeer.TRANSFER_MODE_RELIABLE
+	if is_unreliable and not is_reliable:
+		transfer_mode = NetworkedMultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED
+
+	# Перед отправкой всегда выставляем физический канал и режим доставки.
+	network_peer.transfer_channel = transfer_channel
+	network_peer.transfer_mode = transfer_mode
+	rpc_id(target_peer_id, "_receive_enet_packet", message_type, packet_data)
+
 	if int(network_peer.transfer_channel) != previous_channel:
 		network_peer.transfer_channel = previous_channel
+	if int(network_peer.transfer_mode) != previous_mode:
+		network_peer.transfer_mode = previous_mode
 
 
 func _is_unreliable_message(message_type: int) -> bool:

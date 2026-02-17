@@ -48,6 +48,6 @@ func remove_game_controller():
 	if $"/root".has_node("GameController"):
 		var game_controller = $"/root/GameController"
 		$"/root".remove_child(game_controller)
-		game_controller.queue_free()
+		game_controller.call_deferred("queue_free")
 
 

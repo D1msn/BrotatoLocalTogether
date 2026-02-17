@@ -1,5 +1,7 @@
 extends "res://entities/units/unit/unit.gd"
 
+const InterpolationBuffer = preload("res://mods-unpacked/flash-BrotatoLocalTogether/client/interpolation_buffer.gd")
+
 # THIS IS CURRENTLY A DUPE, hopefully that won't be a problem
 enum EntityState {
 	ENTITY_STATE_NETWORK_ID,
@@ -29,6 +31,30 @@ enum WeaponState {
 	WEAPON_STATE_IS_SHOOTING,
 }
 
+var _interp_buffer = InterpolationBuffer.new()
+var _interp_position_ready: bool = false
+
+
+func _reset_interpolation() -> void:
+	_interp_buffer.clear()
+	_interp_position_ready = false
+
+
+func _ready() -> void:
+	._ready()
+	_reset_interpolation()
+
+
+func respawn() -> void:
+	.respawn()
+	_reset_interpolation()
+
+
+func _process(_delta: float) -> void:
+	if not _interp_position_ready:
+		return
+	position = _interp_buffer.get_pos(Time.get_ticks_msec())
+
 
 func take_damage(value: int, args: TakeDamageArgs) -> Array:
 	if self.in_multiplayer_game and not self.is_host:
@@ -55,7 +81,11 @@ func die(args: = Entity.DieArgs.new())->void :
 
 
 func update_client_enemy(unit_dict : Dictionary) -> void:
-	set_deferred("position", Vector2(unit_dict["X_POS"], unit_dict["Y_POS"]))
+	var snapshot_position = Vector2(float(unit_dict["X_POS"]), float(unit_dict["Y_POS"]))
+	_interp_buffer.add_snapshot(snapshot_position, Time.get_ticks_msec())
+	if not _interp_position_ready:
+		position = snapshot_position
+		_interp_position_ready = true
 	
 	_current_movement.x = unit_dict["MOVE_X"]
 	_current_movement.y = unit_dict["MOVE_Y"]
@@ -71,8 +101,14 @@ func update_client_enemy(unit_dict : Dictionary) -> void:
 
 
 func update_external_player_position(player_dict : Dictionary) -> void:
-	self.position.x = player_dict[EntityState.ENTITY_STATE_X_POS]
-	self.position.y = player_dict[EntityState.ENTITY_STATE_Y_POS]
+	var snapshot_position = Vector2(
+		float(player_dict[EntityState.ENTITY_STATE_X_POS]),
+		float(player_dict[EntityState.ENTITY_STATE_Y_POS])
+	)
+	_interp_buffer.add_snapshot(snapshot_position, Time.get_ticks_msec())
+	if not _interp_position_ready:
+		position = snapshot_position
+		_interp_position_ready = true
 		
 	self.sprite.scale.x  = player_dict[EntityState.ENTITY_STATE_SPRITE_SCALE]
 		
