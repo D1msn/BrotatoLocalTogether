@@ -38,7 +38,7 @@ func _ready() -> void:
 	steam_connection.pending_system_messages.clear()
 
 	if is_inside_tree():
-		create_lobby_button.call_deferred("grab_focus")
+		call_deferred("_safe_focus_create_lobby_button")
 	CoopService.clear_coop_players()
 	_on_refresh_lobbies_button_pressed()
 
@@ -263,5 +263,15 @@ func _make_section_label(text_value: String) -> Label:
 	label.valign = Label.VALIGN_CENTER
 	label.rect_min_size = Vector2(120, 0)
 	return label
+
+
+func _safe_focus_create_lobby_button() -> void:
+	if not is_inside_tree():
+		return
+	if create_lobby_button == null or not is_instance_valid(create_lobby_button):
+		return
+	if not create_lobby_button.is_inside_tree():
+		return
+	create_lobby_button.grab_focus()
 
 
