@@ -25,6 +25,8 @@ const ENVELOPE_KEY_SEQUENCE := "SEQ"
 const ENVELOPE_KEY_TICK := "TICK"
 const ENVELOPE_KEY_SENT_AT_MSEC := "SENT_AT_MSEC"
 const ENVELOPE_KEY_PAYLOAD := "PAYLOAD"
+const ENVELOPE_KEY_COMPRESSED := "COMPRESSED"
+const COMPRESSION_THRESHOLD_BYTES := 512
 const LOG_NAME := "BrotatoLocalTogether:SessionConnection"
 const SCENE_TRANSITION_TIMEOUT_MSEC := 12000
 const SCENE_TRANSITION_RETRY_MSEC := 1000
@@ -393,8 +395,17 @@ func send_p2p_packet(data : Dictionary, message_type : int, target_id = -1) -> v
 	var safe_payload : Dictionary = {}
 	if data != null:
 		safe_payload = data.duplicate(true)
-	var envelope = _build_envelope(safe_payload, message_type)
-	var compressed_data: PoolByteArray = var2bytes(envelope).compress(File.COMPRESSION_GZIP)
+	var payload_bytes: PoolByteArray = var2bytes(safe_payload)
+	var should_compress_payload = payload_bytes.size() > COMPRESSION_THRESHOLD_BYTES
+	var envelope_payload = safe_payload
+	if should_compress_payload:
+		var compressed_payload: PoolByteArray = payload_bytes.compress(File.COMPRESSION_GZIP)
+		if compressed_payload.size() > 0:
+			envelope_payload = compressed_payload
+		else:
+			should_compress_payload = false
+	var envelope = _build_envelope(envelope_payload, message_type, should_compress_payload)
+	var packet_data: PoolByteArray = var2bytes(envelope)
 
 	if target_id == -1:
 		if is_host():
@@ -402,34 +413,47 @@ func send_p2p_packet(data : Dictionary, message_type : int, target_id = -1) -> v
 			for peer_id in connected_peers:
 				if peer_id == steam_id:
 					continue
-				_send_rpc_packet(int(peer_id), message_type, compressed_data)
+				_send_rpc_packet(int(peer_id), message_type, packet_data)
 		elif game_lobby_owner_id > 0:
-			_send_rpc_packet(game_lobby_owner_id, message_type, compressed_data)
+			_send_rpc_packet(game_lobby_owner_id, message_type, packet_data)
 		return
 
 	if target_id == steam_id:
 		return
 
-	_send_rpc_packet(int(target_id), message_type, compressed_data)
+	_send_rpc_packet(int(target_id), message_type, packet_data)
 
 
-remote func _receive_enet_packet(message_type : int, compressed_data : PoolByteArray) -> void:
+remote func _receive_enet_packet(message_type : int, packet_data : PoolByteArray) -> void:
 	if not is_inside_tree():
 		return
 	var tree = get_tree()
 	if tree == null:
 		return
 	var sender_id = tree.get_rpc_sender_id()
+	if not _is_allowed_sender_for_message(message_type, sender_id):
+		ModLoaderLog.warning("Rejected packet from unknown peer %d" % sender_id, LOG_NAME)
+		return
 
 	var decoded_payload = null
-	if compressed_data.size() > 0:
-		var unpacked_data = compressed_data.decompress_dynamic(-1, File.COMPRESSION_GZIP)
-		if unpacked_data.size() > 0:
-			decoded_payload = bytes2var(unpacked_data)
+	if packet_data.size() > 0:
+		decoded_payload = bytes2var(packet_data)
 
 	var packet = _parse_received_packet(message_type, decoded_payload, sender_id)
 	if not bool(packet.get("ok", false)):
 		return
+
+	if bool(packet.get("compressed", false)):
+		var compressed_payload = packet.get("payload_compressed", PoolByteArray())
+		if not (compressed_payload is PoolByteArray):
+			return
+		var unpacked_data = compressed_payload.decompress_dynamic(-1, File.COMPRESSION_GZIP)
+		if unpacked_data.size() <= 0:
+			return
+		var unpacked_payload = bytes2var(unpacked_data)
+		if not (unpacked_payload is Dictionary):
+			return
+		packet["payload"] = unpacked_payload
 
 	_dispatch_incoming_packet(int(packet.get("message_type", message_type)), packet.get("payload", {}), sender_id)
 
@@ -439,6 +463,12 @@ func read_p2p_packet() -> void:
 
 
 func _dispatch_incoming_packet(channel : int, data : Dictionary, sender_id : int) -> void:
+	if not _is_allowed_sender_for_message(channel, sender_id):
+		ModLoaderLog.warning("Rejected packet from unknown peer %d" % sender_id, LOG_NAME)
+		return
+	if not _is_valid_phase_packet(channel, data, sender_id):
+		return
+
 	if channel == SESSION_MESSAGE_REGISTER_CLIENT:
 		_receive_client_registration(data, sender_id)
 		return
@@ -537,6 +567,156 @@ func _dispatch_incoming_packet(channel : int, data : Dictionary, sender_id : int
 		_receive_scene_ready(data, sender_id)
 	elif channel == MessageType.MESSAGE_TYPE_SCENE_COMMIT:
 		_receive_scene_commit(data, sender_id)
+
+
+func _is_allowed_sender_for_message(message_type: int, sender_id: int) -> bool:
+	if sender_id <= 0:
+		return false
+	if sender_id == steam_id:
+		return true
+	if known_peer_names.has(sender_id):
+		return true
+	if message_type == SESSION_MESSAGE_REGISTER_CLIENT and is_host():
+		return true
+	if message_type == SESSION_MESSAGE_REGISTER_ACK and sender_id == game_lobby_owner_id:
+		return true
+	if message_type == SESSION_MESSAGE_REGISTER_REJECT and sender_id == game_lobby_owner_id:
+		return true
+	if message_type == SESSION_MESSAGE_LOBBY_SYNC and sender_id == game_lobby_owner_id:
+		return true
+	if message_type == SESSION_MESSAGE_RECOVERY_STATE and sender_id == game_lobby_owner_id:
+		return true
+	return false
+
+
+func _is_valid_phase_packet(message_type: int, data: Dictionary, sender_id: int) -> bool:
+	if session_registry == null:
+		return true
+	if not session_registry.has_method("is_valid_phase_transition"):
+		return true
+
+	var target_phase = _target_phase_for_message(message_type, data)
+	if target_phase.empty():
+		return true
+
+	var from_phase = _normalize_phase_name(_current_game_phase())
+	var to_phase = _normalize_phase_name(target_phase)
+	if from_phase.empty() or to_phase.empty():
+		return true
+	if session_registry.is_valid_phase_transition(from_phase, to_phase):
+		return true
+
+	ModLoaderLog.warning(
+		"Rejected packet type %d from peer %d due to invalid phase transition %s -> %s" % [message_type, sender_id, from_phase, to_phase],
+		LOG_NAME
+	)
+	return false
+
+
+func _target_phase_for_message(message_type: int, data: Dictionary) -> String:
+	match message_type:
+		SESSION_MESSAGE_REGISTER_ACK:
+			return _normalize_phase_name(String(data.get("GAME_PHASE", "")))
+		SESSION_MESSAGE_LOBBY_SYNC:
+			return _normalize_phase_name(String(data.get("GAME_PHASE", "")))
+		MessageType.MESSAGE_TYPE_CHARACTER_FOCUS:
+			return "CHARACTER_SELECT"
+		MessageType.MESSAGE_TYPE_CHARACTER_SELECTED:
+			return "CHARACTER_SELECT"
+		MessageType.MESSAGE_TYPE_CHARACTER_LOBBY_UPDATE:
+			return "CHARACTER_SELECT"
+		MessageType.MESSAGE_TYPE_CHARACTER_SELECTION_COMPLETED:
+			return "CHARACTER_SELECT"
+		MessageType.MESSAGE_TYPE_WEAPON_FOCUS:
+			return "WEAPON_SELECT"
+		MessageType.MESSAGE_TYPE_WEAPON_SELECTED:
+			return "WEAPON_SELECT"
+		MessageType.MESSAGE_TYPE_WEAPON_LOBBY_UPDATE:
+			return "WEAPON_SELECT"
+		MessageType.MESSAGE_TYPE_WEAPON_SELECTION_COMPLETED:
+			return "WEAPON_SELECT"
+		MessageType.MESSAGE_TYPE_DIFFICULTY_FOCUSED:
+			return "DIFFICULTY_SELECT"
+		MessageType.MESSAGE_TYPE_DIFFICULTY_PRESSED:
+			return "DIFFICULTY_SELECT"
+		MessageType.MESSAGE_TYPE_SHOP_LOBBY_UPDATE:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_WEAPON_DISCARD:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_BUY_ITEM:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_REROLL:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_COMBINE_WEAPON:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_ITEM_FOCUS:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_GO_BUTTON_UPDATED:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_LOCK_ITEM:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_UNLOCK_ITEM:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_INVENTORY_ITEM_FOCUS:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_SHOP_CLOSE_POPUP:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_HOST_ENTERED_SHOP:
+			return "SHOP"
+		MessageType.MESSAGE_TYPE_MAIN_STATE:
+			return "MAIN"
+		MessageType.MESSAGE_TYPE_CLIENT_POSITION:
+			return "MAIN"
+		MessageType.MESSAGE_TYPE_CLIENT_FOCUS_MAIN_SCENE:
+			return "MAIN"
+		MessageType.MESSAGE_TYPE_MAIN_SCENE_REROLL_BUTTON_PRESSED:
+			return "MAIN"
+		MessageType.MESSAGE_TYPE_MAIN_SCENE_CHOOSE_UPGRADE_PRESSED:
+			return "MAIN"
+		MessageType.MESSAGE_TYPE_MAIN_SCENE_TAKE_BUTTON_PRESSED:
+			return "MAIN"
+		MessageType.MESSAGE_TYPE_MAIN_SCENE_DISCARD_BUTTON_PRESSED:
+			return "MAIN"
+		MessageType.MESSAGE_TYPE_HOST_ROUND_START:
+			return "MAIN"
+		MessageType.MESSAGE_TYPE_LEAVE_SHOP:
+			return "MAIN"
+		MessageType.MESSAGE_TYPE_SCENE_PREPARE:
+			return _phase_for_scene_identity(String(data.get(SCENE_TRANSITION_KEY_TARGET_SCENE, "")), "")
+		MessageType.MESSAGE_TYPE_SCENE_COMMIT:
+			return _phase_for_scene_identity(String(data.get(SCENE_TRANSITION_KEY_TARGET_SCENE, "")), "")
+	return ""
+
+
+func _normalize_phase_name(phase_name: String) -> String:
+	if session_registry != null and session_registry.has_method("normalize_game_phase"):
+		return String(session_registry.normalize_game_phase(phase_name))
+	return String(phase_name).strip_edges().to_upper()
+
+
+func _phase_for_scene_identity(scene_path: String, scene_name: String) -> String:
+	var normalized_path = String(scene_path).strip_edges().to_lower()
+	var normalized_name = String(scene_name).strip_edges().to_lower()
+	var scene_identity = "%s %s" % [normalized_path, normalized_name]
+
+	if scene_identity.find("character_selection") != -1:
+		return "CHARACTER_SELECT"
+	if scene_identity.find("weapon_selection") != -1:
+		return "WEAPON_SELECT"
+	if scene_identity.find("difficulty_selection") != -1:
+		return "DIFFICULTY_SELECT"
+	if scene_identity.find("postgame") != -1:
+		return "POSTGAME"
+	if scene_identity.find("shop") != -1:
+		return "SHOP"
+	if scene_identity.find("multiplayer_menu") != -1 or scene_identity.find("main_menu") != -1 or scene_identity.find("lobby") != -1:
+		return "LOBBY"
+	if normalized_name == "main" or normalized_name == "clientmain" or normalized_name == "client_main":
+		return "MAIN"
+	if normalized_path.find("/main.") != -1 or normalized_path.find("/main/") != -1 or normalized_path.find("client_main") != -1:
+		return "MAIN"
+
+	return ""
 
 
 func _on_network_peer_connected(peer_id : int) -> void:
@@ -883,7 +1063,7 @@ func _next_outgoing_sequence() -> int:
 	return outgoing_sequence
 
 
-func _build_envelope(payload: Dictionary, message_type: int) -> Dictionary:
+func _build_envelope(payload, message_type: int, payload_compressed: bool = false) -> Dictionary:
 	return {
 		ENVELOPE_KEY_PROTOCOL_VERSION: PROTOCOL_VERSION,
 		ENVELOPE_KEY_MESSAGE_TYPE: message_type,
@@ -892,6 +1072,7 @@ func _build_envelope(payload: Dictionary, message_type: int) -> Dictionary:
 		ENVELOPE_KEY_TICK: Engine.get_physics_frames(),
 		ENVELOPE_KEY_SENT_AT_MSEC: Time.get_ticks_msec(),
 		ENVELOPE_KEY_PAYLOAD: payload,
+		ENVELOPE_KEY_COMPRESSED: payload_compressed,
 	}
 
 
@@ -900,6 +1081,8 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 		"ok": true,
 		"message_type": fallback_message_type,
 		"payload": {},
+		"compressed": false,
+		"payload_compressed": PoolByteArray(),
 	}
 	if not (decoded_payload is Dictionary):
 		result["ok"] = false
@@ -914,7 +1097,8 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 		not decoded_dict.has(ENVELOPE_KEY_SEQUENCE) or
 		not decoded_dict.has(ENVELOPE_KEY_TICK) or
 		not decoded_dict.has(ENVELOPE_KEY_SENT_AT_MSEC) or
-		not decoded_dict.has(ENVELOPE_KEY_PAYLOAD)
+		not decoded_dict.has(ENVELOPE_KEY_PAYLOAD) or
+		not decoded_dict.has(ENVELOPE_KEY_COMPRESSED)
 	):
 		result["ok"] = false
 		return result
@@ -923,6 +1107,7 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 	var parsed_message_type = int(decoded_dict.get(ENVELOPE_KEY_MESSAGE_TYPE, fallback_message_type))
 	var remote_session_id = String(decoded_dict.get(ENVELOPE_KEY_SESSION_ID, "")).strip_edges()
 	var payload_data = decoded_dict.get(ENVELOPE_KEY_PAYLOAD, {})
+	var payload_is_compressed = bool(decoded_dict.get(ENVELOPE_KEY_COMPRESSED, false))
 
 	if parsed_message_type != fallback_message_type:
 		result["ok"] = false
@@ -943,12 +1128,19 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 			result["ok"] = false
 			return result
 
-	if not (payload_data is Dictionary):
-		result["ok"] = false
-		return result
+	if payload_is_compressed:
+		if not (payload_data is PoolByteArray):
+			result["ok"] = false
+			return result
+		result["compressed"] = true
+		result["payload_compressed"] = payload_data
+	else:
+		if not (payload_data is Dictionary):
+			result["ok"] = false
+			return result
+		result["payload"] = payload_data
 
 	result["message_type"] = parsed_message_type
-	result["payload"] = payload_data
 	return result
 
 
@@ -1216,7 +1408,7 @@ func _apply_scene_commit(target_scene: String) -> void:
 	var _scene_error = tree.change_scene(target_scene)
 
 
-func _send_rpc_packet(target_peer_id: int, message_type: int, compressed_data: PoolByteArray) -> void:
+func _send_rpc_packet(target_peer_id: int, message_type: int, packet_data: PoolByteArray) -> void:
 	if target_peer_id <= 0:
 		return
 	var previous_channel = int(network_peer.transfer_channel)
@@ -1232,11 +1424,11 @@ func _send_rpc_packet(target_peer_id: int, message_type: int, compressed_data: P
 	if is_unreliable and is_reliable:
 		is_unreliable = false
 	if is_unreliable and has_method("rpc_unreliable_id"):
-		rpc_unreliable_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
+		rpc_unreliable_id(target_peer_id, "_receive_enet_packet", message_type, packet_data)
 	elif is_reliable:
-		rpc_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
+		rpc_id(target_peer_id, "_receive_enet_packet", message_type, packet_data)
 	else:
-		rpc_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
+		rpc_id(target_peer_id, "_receive_enet_packet", message_type, packet_data)
 	if int(network_peer.transfer_channel) != previous_channel:
 		network_peer.transfer_channel = previous_channel
 
@@ -1534,14 +1726,20 @@ func _change_scene_to_character_selection() -> void:
 
 
 func _current_game_phase() -> String:
+	if not is_inside_tree():
+		return "LOBBY"
+
+	var tree = get_tree()
+	if tree != null and tree.current_scene != null:
+		var scene_path = String(tree.current_scene.filename)
+		var scene_name = String(tree.current_scene.name)
+		var scene_phase = _phase_for_scene_identity(scene_path, scene_name)
+		if not scene_phase.empty():
+			return scene_phase
+
 	var options = _get_options()
 	if options != null and options.in_multiplayer_game:
 		return "MAIN"
-
-	if get_tree().current_scene != null:
-		var scene_name = String(get_tree().current_scene.name)
-		if scene_name == "Main" or scene_name == "ClientMain":
-			return "MAIN"
 
 	return "LOBBY"
 

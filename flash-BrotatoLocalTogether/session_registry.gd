@@ -6,6 +6,79 @@ const ACTIVE_SESSION_PATH := SESSIONS_DIR + "/active_session.json"
 const SESSION_SCHEMA_VERSION := 1
 const DEFAULT_TTL_SEC := 900
 
+enum GamePhase {
+	LOBBY,
+	CHARACTER_SELECT,
+	WEAPON_SELECT,
+	DIFFICULTY_SELECT,
+	MAIN,
+	SHOP,
+	POSTGAME,
+}
+
+const GAME_PHASE_NAME_TO_VALUE := {
+	"LOBBY": GamePhase.LOBBY,
+	"CHARACTER_SELECT": GamePhase.CHARACTER_SELECT,
+	"WEAPON_SELECT": GamePhase.WEAPON_SELECT,
+	"DIFFICULTY_SELECT": GamePhase.DIFFICULTY_SELECT,
+	"MAIN": GamePhase.MAIN,
+	"SHOP": GamePhase.SHOP,
+	"POSTGAME": GamePhase.POSTGAME,
+}
+
+const GAME_PHASE_VALUE_TO_NAME := {
+	GamePhase.LOBBY: "LOBBY",
+	GamePhase.CHARACTER_SELECT: "CHARACTER_SELECT",
+	GamePhase.WEAPON_SELECT: "WEAPON_SELECT",
+	GamePhase.DIFFICULTY_SELECT: "DIFFICULTY_SELECT",
+	GamePhase.MAIN: "MAIN",
+	GamePhase.SHOP: "SHOP",
+	GamePhase.POSTGAME: "POSTGAME",
+}
+
+const ALLOWED_TRANSITIONS := {
+	GamePhase.LOBBY: [GamePhase.CHARACTER_SELECT, GamePhase.MAIN],
+	GamePhase.CHARACTER_SELECT: [GamePhase.WEAPON_SELECT, GamePhase.DIFFICULTY_SELECT, GamePhase.LOBBY],
+	GamePhase.WEAPON_SELECT: [GamePhase.DIFFICULTY_SELECT, GamePhase.CHARACTER_SELECT, GamePhase.LOBBY],
+	GamePhase.DIFFICULTY_SELECT: [GamePhase.MAIN, GamePhase.LOBBY],
+	GamePhase.MAIN: [GamePhase.SHOP, GamePhase.POSTGAME, GamePhase.LOBBY],
+	GamePhase.SHOP: [GamePhase.MAIN, GamePhase.POSTGAME, GamePhase.LOBBY],
+	GamePhase.POSTGAME: [GamePhase.LOBBY, GamePhase.CHARACTER_SELECT],
+}
+
+
+func parse_game_phase(phase_name: String) -> int:
+	var normalized_phase = String(phase_name).strip_edges().to_upper()
+	if GAME_PHASE_NAME_TO_VALUE.has(normalized_phase):
+		return int(GAME_PHASE_NAME_TO_VALUE[normalized_phase])
+	return -1
+
+
+func game_phase_to_string(phase_value: int) -> String:
+	if GAME_PHASE_VALUE_TO_NAME.has(phase_value):
+		return String(GAME_PHASE_VALUE_TO_NAME[phase_value])
+	return ""
+
+
+func normalize_game_phase(phase_name: String) -> String:
+	var phase_value = parse_game_phase(phase_name)
+	if phase_value < 0:
+		return ""
+	return game_phase_to_string(phase_value)
+
+
+func is_valid_phase_transition(from_phase: String, to_phase: String) -> bool:
+	var from_value = parse_game_phase(from_phase)
+	var to_value = parse_game_phase(to_phase)
+	if from_value < 0 or to_value < 0:
+		return false
+	if from_value == to_value:
+		return true
+	if not ALLOWED_TRANSITIONS.has(from_value):
+		return false
+	var next_phases: Array = ALLOWED_TRANSITIONS[from_value]
+	return to_value in next_phases
+
 
 func load_active_session() -> Dictionary:
 	var file := File.new()
