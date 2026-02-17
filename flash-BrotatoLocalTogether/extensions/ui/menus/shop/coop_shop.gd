@@ -19,6 +19,23 @@ var focusing_go_button = false
 # changes (buys, discards, etc) and prevents the client focus from disappearing
 var pending_force_focus = []
 
+const NETWORK_SIGNALS := [
+	["client_status_received", "_client_status_received"],
+	["shop_lobby_update", "_update_shop"],
+	["client_shop_focus_updated", "_client_shop_focus_updated"],
+	["client_shop_go_button_pressed", "_client_shop_go_button_pressed"],
+	["client_shop_discard_weapon", "_client_shop_discard_weapon"],
+	["client_shop_combine_weapon", "_client_shop_combine_weapon"],
+	["client_shop_buy_item", "_client_shop_buy_item"],
+	["client_shop_reroll", "_client_shop_reroll"],
+	["client_shop_lock_item", "_client_shop_lock_item"],
+	["client_shop_unlock_item", "_client_shop_unlock_item"],
+	["client_shop_focus_inventory_element", "_client_focused_inventory_element"],
+	["client_shop_requested", "send_shop_state"],
+	["close_popup", "_remote_close_client_popup"],
+	["receive_leave_shop", "_receive_leave_shop"],
+]
+
 
 func _ready():
 	steam_connection = $"/root/NetworkConnection"
@@ -28,28 +45,26 @@ func _ready():
 	
 	if in_multiplayer_game:
 		waiting_to_start_shop = true
-		
-		steam_connection.connect("client_status_received", self, "_client_status_received")
-		steam_connection.connect("shop_lobby_update", self, "_update_shop")
-		steam_connection.connect("client_shop_focus_updated", self, "_client_shop_focus_updated")
-		steam_connection.connect("client_shop_go_button_pressed", self, "_client_shop_go_button_pressed")
-		steam_connection.connect("client_shop_discard_weapon", self, "_client_shop_discard_weapon")
-		steam_connection.connect("client_shop_combine_weapon", self, "_client_shop_combine_weapon")
-		steam_connection.connect("client_shop_buy_item", self, "_client_shop_buy_item")
-		steam_connection.connect("client_shop_reroll", self, "_client_shop_reroll")
-		steam_connection.connect("client_shop_lock_item", self, "_client_shop_lock_item")
-		steam_connection.connect("client_shop_unlock_item", self, "_client_shop_unlock_item")
-		steam_connection.connect("client_shop_focus_inventory_element", self, "_client_focused_inventory_element")
-		steam_connection.connect("client_shop_requested", self, "send_shop_state")
-		steam_connection.connect("close_popup", self, "_remote_close_client_popup")
-		steam_connection.connect("receive_leave_shop", self, "_receive_leave_shop")
+
+		for signal_info in NETWORK_SIGNALS:
+			_connect_network_signal(signal_info[0], signal_info[1])
 		
 		if steam_connection.is_host():
 			steam_connection.send_host_entered_shop()
 
 
-func _process(_delta):
+func _exit_tree() -> void:
 	if in_multiplayer_game:
+		for signal_info in NETWORK_SIGNALS:
+			_disconnect_network_signal(signal_info[0], signal_info[1])
+
+
+func _process(_delta):
+	if not is_inside_tree():
+		return
+	if in_multiplayer_game:
+		if steam_connection == null:
+			return
 		if waiting_to_start_shop:
 			if steam_connection.is_host():
 				var all_players_entered = true
@@ -66,9 +81,17 @@ func _process(_delta):
 
 
 func _client_status_received(client_data : Dictionary, player_index : int) -> void:
-	if waiting_to_start_shop:
-		if client_data["CURRENT_SCENE"] == get_tree().current_scene.name:
-			player_in_scene[player_index] = true
+	if not is_inside_tree():
+		return
+	if not waiting_to_start_shop:
+		return
+	if not client_data.has("CURRENT_SCENE"):
+		return
+	var current_scene_name = _get_current_scene_name()
+	if current_scene_name.empty():
+		return
+	if client_data["CURRENT_SCENE"] == current_scene_name:
+		player_in_scene[player_index] = true
 
 
 func _on_element_focused(element: InventoryElement, player_index: int)->void :
@@ -122,7 +145,11 @@ func _client_shop_discard_weapon(weapon_string : String, player_index : int) -> 
 
 
 func _remote_close_client_popup() -> void:
-	_get_coop_player_container(steam_connection.get_my_index()).item_popup.cancel()
+	if not is_inside_tree():
+		return
+	var player_container = _get_coop_player_container(steam_connection.get_my_index())
+	if player_container != null and player_container.item_popup != null:
+		player_container.item_popup.cancel()
 
 
 func _on_GoButton_pressed(player_index: int) -> void:
@@ -135,7 +162,10 @@ func _on_GoButton_pressed(player_index: int) -> void:
 
 
 func _on_go_button_pressed_brotatogether(player_index: int)->void :
-	if get_tree().paused:
+	if not _can_use_tree():
+		return
+	var tree = get_tree()
+	if tree.paused:
 		return 
 
 	if _player_pressed_go_button[player_index]:
@@ -153,12 +183,15 @@ func _on_go_button_pressed_brotatogether(player_index: int)->void :
 	
 	RunData.current_wave += 1
 	steam_connection.leave_shop()
-	var _error = get_tree().change_scene(MenuData.game_scene)
+	var _error = tree.change_scene(MenuData.game_scene)
 
 
 func _receive_leave_shop() -> void:
+	if not _can_use_tree():
+		return
+	var tree = get_tree()
 	RunData.current_wave += 1
-	var _error = get_tree().change_scene(MenuData.game_scene)
+	var _error = tree.change_scene(MenuData.game_scene)
 
 
 func _clear_go_button_pressed(player_index: int) -> void :
@@ -215,6 +248,8 @@ func _client_shop_unlock_item(item_string : String, player_index : int) -> void:
 
 
 func send_shop_state(changed_shop_player_indeces : Array = []) -> void:
+	if not is_inside_tree() or steam_connection == null:
+		return
 	var result_dict : Dictionary = {}
 	var abyssal_dlc = ProgressData.get_dlc_data("abyssal_terrors")
 	
@@ -282,6 +317,8 @@ func send_shop_state(changed_shop_player_indeces : Array = []) -> void:
 
 
 func _update_shop(shop_dictionary : Dictionary) -> void:
+	if not is_inside_tree():
+		return
 	if not shop_dictionary.has("PLAYERS"):
 		print("WARNING - received shop update without PLAYERS element, ignoring; data:", shop_dictionary)
 		return
@@ -609,6 +646,8 @@ func _set_client_focus_for_player(focus_dict : Dictionary, player_index : int) -
 # Process time check for focusing reroll or go buttons which don't have 
 # exisiting connected functions
 func _check_for_focus_change() -> void:
+	if not is_inside_tree() or steam_connection == null:
+		return
 	var player_index : int = steam_connection.get_my_index()
 	var focused_control = Utils.get_focus_emulator(player_index).focused_control
 	
@@ -638,3 +677,35 @@ func _on_RerollButton_pressed(player_index: int)->void :
 		steam_connection.shop_reroll(player_index)
 	else:
 		._on_RerollButton_pressed( player_index)
+
+
+func _connect_network_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	if steam_connection.is_connected(signal_name, self, method_name):
+		return
+	var _connect_error = steam_connection.connect(signal_name, self, method_name)
+
+
+func _disconnect_network_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	if not steam_connection.is_connected(signal_name, self, method_name):
+		return
+	steam_connection.disconnect(signal_name, self, method_name)
+
+
+func _can_use_tree() -> bool:
+	if not is_inside_tree():
+		return false
+	var tree = get_tree()
+	return tree != null
+
+
+func _get_current_scene_name() -> String:
+	if not _can_use_tree():
+		return ""
+	var tree = get_tree()
+	if tree.current_scene == null:
+		return ""
+	return tree.current_scene.name

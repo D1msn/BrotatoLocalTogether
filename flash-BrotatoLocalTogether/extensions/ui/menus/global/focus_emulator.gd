@@ -19,7 +19,6 @@ func _exit_tree() -> void:
 	var viewport = get_viewport()
 	if viewport != null and viewport.is_connected("gui_focus_changed", self, "_on_focus_changed_multiplayer"):
 		viewport.disconnect("gui_focus_changed", self, "_on_focus_changed_multiplayer")
-	._exit_tree()
 
 
 func _on_focus_changed_multiplayer(control:Control) -> void:
@@ -30,6 +29,10 @@ func _on_focus_changed_multiplayer(control:Control) -> void:
 # Have line edit eat inputs so that you can send messages
 func _handle_input(event:InputEvent) -> bool:
 	if not is_inside_tree():
+		return false
+	if _device >= 50:
+		# Remote player slots не должны читать локальный InputMap
+		# (иначе ошибки вида ui_right_101).
 		return false
 	_resolve_singletons_if_needed()
 

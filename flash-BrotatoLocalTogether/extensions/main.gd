@@ -288,9 +288,19 @@ func _send_game_state() -> void:
 	state_dict["PLAYERS"] = players
 
 	if safe_core_mode:
-		state_dict["ENEMIES"] = []
-		state_dict["BOSSES"] = []
-		state_dict["BATCHED_ENEMY_DEATHS"] = []
+		var safe_enemies = []
+		for enemy in _entity_spawner.enemies:
+			if is_instance_valid(enemy):
+				safe_enemies.push_back(_dictionary_for_enemy(enemy))
+		state_dict["ENEMIES"] = safe_enemies
+
+		var safe_bosses = []
+		for boss in _entity_spawner.bosses:
+			if is_instance_valid(boss):
+				safe_bosses.push_back(_dictionary_for_enemy(boss))
+		state_dict["BOSSES"] = safe_bosses
+
+		state_dict["BATCHED_ENEMY_DEATHS"] = brotatogether_options.batched_enemy_deaths.duplicate()
 		state_dict["BATCHED_HIT_EFFECTS"] = []
 		state_dict["BATCHED_HIT_PARTICLES"] = []
 		state_dict["BATCHED_FLOATING_TEXT"] = []
@@ -305,10 +315,7 @@ func _send_game_state() -> void:
 		state_dict["NEUTRALS"] = []
 		state_dict["STRUCTURES"] = []
 		state_dict["ENEMY_PROJECTILES"] = []
-		state_dict["UPGRADE_MENU_STATUS"] = {
-			"MENU_VISIBLE": false,
-			"PLAYER_MENUS": [],
-		}
+		state_dict["UPGRADE_MENU_STATUS"] = _safe_upgrade_menu_status()
 
 		brotatogether_options.batched_enemy_deaths.clear()
 		brotatogether_options.batched_hit_effects.clear()
@@ -387,6 +394,18 @@ func _send_game_state() -> void:
 	)
 
 
+func _safe_upgrade_menu_status() -> Dictionary:
+	var fallback := {
+		"MENU_VISIBLE": false,
+		"PLAYER_MENUS": [],
+	}
+	if not is_inside_tree():
+		return fallback
+	if _coop_upgrades_ui == null:
+		return fallback
+	return _host_menu_status()
+
+
 func _state_update(state_dict : Dictionary) -> void:	
 	if not (state_dict is Dictionary):
 		_core_warn_once("state_not_dictionary", "Получен state не-словарь, пакет пропущен.")
@@ -421,9 +440,49 @@ func _state_update(state_dict : Dictionary) -> void:
 	var player_update_time = Time.get_ticks_usec() - before
 
 	if safe_core_mode:
+		before = Time.get_ticks_usec()
+		var safe_enemies_array = _state_array(state_dict, "ENEMIES")
+		for enemy in safe_enemies_array:
+			if enemy is Dictionary:
+				_update_enemy(enemy)
+		var safe_enemies_update_time = Time.get_ticks_usec() - before
+
+		before = Time.get_ticks_usec()
+		var safe_bosses_array = _state_array(state_dict, "BOSSES")
+		for boss in safe_bosses_array:
+			if boss is Dictionary:
+				_update_enemy(boss)
+		var safe_bosses_update_time = Time.get_ticks_usec() - before
+
+		before = Time.get_ticks_usec()
+		for enemy_id in _state_array(state_dict, "BATCHED_ENEMY_DEATHS"):
+			if client_enemies.has(enemy_id):
+				if not client_enemies[enemy_id].dead:
+					client_enemies[enemy_id].die()
+				client_enemies.erase(enemy_id)
+		var safe_enemy_deaths_update_time = Time.get_ticks_usec() - before
+
+		before = Time.get_ticks_usec()
+		var safe_menu_state = _state_dict(state_dict, "UPGRADE_MENU_STATUS")
+		if not safe_menu_state.has("MENU_VISIBLE"):
+			safe_menu_state["MENU_VISIBLE"] = false
+		if not safe_menu_state.has("PLAYER_MENUS"):
+			safe_menu_state["PLAYER_MENUS"] = []
+		_update_menu(safe_menu_state)
+		var safe_menu_update_time = Time.get_ticks_usec() - before
+
 		_append_core_trace(
-			"_state_update safe done: players=%s"
-			% str(players_array.size())
+			"_state_update safe done: players=%s enemies=%s bosses=%s menu_visible=%s enemies_update_usec=%s bosses_update_usec=%s enemy_deaths_update_usec=%s menu_update_usec=%s"
+			% [
+				str(players_array.size()),
+				str(safe_enemies_array.size()),
+				str(safe_bosses_array.size()),
+				str(bool(safe_menu_state.get("MENU_VISIBLE", false))),
+				str(safe_enemies_update_time),
+				str(safe_bosses_update_time),
+				str(safe_enemy_deaths_update_time),
+				str(safe_menu_update_time),
+			]
 		)
 		if ENABLE_DEBUG:
 			var safe_end_time : int = Time.get_ticks_usec()
@@ -434,7 +493,10 @@ func _state_update(state_dict : Dictionary) -> void:
 				print_debug(
 					"Wave Timer: ", wave_timer_update_time,
 					" --- Bonus Gold: ", bonus_gold_update_time,
-					" --- Players: ", player_update_time
+					" --- Players: ", player_update_time,
+					" --- Enemies: ", safe_enemies_update_time,
+					" --- Bosses: ", safe_bosses_update_time,
+					" --- EnemyDeaths: ", safe_enemy_deaths_update_time
 				)
 		return
 	
