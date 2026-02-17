@@ -66,6 +66,7 @@ var pending_client_recovery_state : Dictionary = {}
 var attempted_tokenless_retry : bool = false
 var network_metrics_node : Node = null
 var _last_seq_by_peer : Dictionary = {}
+var _protocol_mismatch_dialog : AcceptDialog = null
 var scene_transition_active : bool = false
 var scene_transition_role : String = ""
 var scene_transition_id : String = ""
@@ -1074,6 +1075,21 @@ func _receive_client_registration_reject(data : Dictionary, sender_id : int) -> 
 
 	var reason_code = String(data.get("REASON_CODE", "rejected"))
 	var reason_text = String(data.get("REASON_TEXT", "Connection rejected"))
+	var host_protocol_version = int(data.get("PROTOCOL_VERSION", -1))
+	if reason_code == "protocol_mismatch":
+		if host_protocol_version <= 0:
+			var host_tag_index = reason_text.find("host=")
+			if host_tag_index >= 0:
+				var host_version_text = reason_text.substr(host_tag_index + 5, reason_text.length() - (host_tag_index + 5))
+				var split_index = host_version_text.find(" ")
+				if split_index >= 0:
+					host_version_text = host_version_text.substr(0, split_index)
+				if host_version_text.is_valid_integer():
+					host_protocol_version = int(host_version_text)
+		if host_protocol_version <= 0:
+			host_protocol_version = 0
+		reason_text = "Host version %d, You version %d. Please update!" % [host_protocol_version, PROTOCOL_VERSION]
+		_show_protocol_mismatch_popup(host_protocol_version, PROTOCOL_VERSION)
 
 	if not attempted_tokenless_retry and (
 		reason_code == "session_mismatch" or
@@ -1328,10 +1344,25 @@ func _all_scene_transition_peers_ready() -> bool:
 	if scene_transition_ready_by_peer.empty():
 		return true
 
-	for peer_id in scene_transition_ready_by_peer.keys():
-		if not bool(scene_transition_ready_by_peer[peer_id]):
+	var ready_snapshot: Dictionary = scene_transition_ready_by_peer.duplicate(true)
+	for peer_id_value in ready_snapshot.keys():
+		var peer_id = int(peer_id_value)
+		if peer_id <= 0:
+			continue
+		if not _is_peer_in_lobby_members(peer_id):
+			continue
+		if not bool(ready_snapshot.get(peer_id, false)):
 			return false
 	return true
+
+
+func _is_peer_in_lobby_members(peer_id: int) -> bool:
+	if peer_id == steam_id:
+		return true
+	for member in lobby_members:
+		if int(member) == peer_id:
+			return true
+	return false
 
 
 func _scene_transition_prepare_payload() -> Dictionary:
@@ -1409,6 +1440,13 @@ func _receive_scene_prepare(data: Dictionary, sender_id: int) -> void:
 	var timeout_msec = int(data.get(SCENE_TRANSITION_KEY_TIMEOUT_MSEC, SCENE_TRANSITION_TIMEOUT_MSEC))
 	timeout_msec = int(clamp(timeout_msec, 10000, 15000))
 	var now_msec = Time.get_ticks_msec()
+	var started_at_msec = int(data.get(SCENE_TRANSITION_KEY_STARTED_AT_MSEC, now_msec))
+	if started_at_msec <= 0:
+		started_at_msec = now_msec
+	if started_at_msec > now_msec:
+		started_at_msec = now_msec
+	if started_at_msec + timeout_msec < now_msec:
+		return
 
 	var is_same_transition = (
 		scene_transition_active and
@@ -1423,8 +1461,8 @@ func _receive_scene_prepare(data: Dictionary, sender_id: int) -> void:
 		scene_transition_id = transition_id
 		scene_transition_target_scene = target_scene
 		scene_transition_source_scene = String(data.get(SCENE_TRANSITION_KEY_SOURCE_SCENE, ""))
-		scene_transition_started_msec = now_msec
-	scene_transition_deadline_msec = now_msec + timeout_msec
+		scene_transition_started_msec = started_at_msec
+	scene_transition_deadline_msec = started_at_msec + timeout_msec
 
 	scene_transition_prepare_sender_id = sender_id
 	_send_scene_ready(scene_transition_prepare_sender_id)
@@ -1808,6 +1846,32 @@ func _go_to_multiplayer_menu() -> void:
 func _push_system_message(message : String) -> void:
 	pending_system_messages.push_back(message)
 	emit_signal("global_chat_received", "SYSTEM", message)
+
+
+func _show_protocol_mismatch_popup(host_version: int, client_version: int) -> void:
+	var message = "Host version %d, You version %d. Please update!" % [host_version, client_version]
+	var tree = get_tree()
+	if tree == null or tree.current_scene == null:
+		_push_system_message(message)
+		return
+
+	if _protocol_mismatch_dialog != null and is_instance_valid(_protocol_mismatch_dialog):
+		_protocol_mismatch_dialog.dialog_text = message
+		_protocol_mismatch_dialog.popup_centered()
+		return
+
+	var dialog := AcceptDialog.new()
+	dialog.window_title = "Protocol mismatch"
+	dialog.dialog_text = message
+	dialog.connect("popup_hide", self, "_on_protocol_mismatch_popup_hide")
+	dialog.connect("popup_hide", dialog, "queue_free")
+	tree.current_scene.add_child(dialog)
+	_protocol_mismatch_dialog = dialog
+	dialog.popup_centered()
+
+
+func _on_protocol_mismatch_popup_hide() -> void:
+	_protocol_mismatch_dialog = null
 
 
 func _change_scene_to_character_selection() -> void:
