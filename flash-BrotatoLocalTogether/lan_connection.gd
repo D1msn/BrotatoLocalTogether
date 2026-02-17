@@ -138,30 +138,6 @@ func _notification(what: int) -> void:
 		_flush_snapshot(true)
 
 
-func _request_global_chat_search() -> void:
-	return
-
-
-func _on_lobby_match_list(_lobbies: Array) -> void:
-	return
-
-
-func _on_lobby_created(_connect: int, _created_lobby_id: int) -> void:
-	return
-
-
-func _on_lobby_joined(_lobby_id: int, _permissions: int, _locked: bool, _response: int) -> void:
-	return
-
-
-func _on_lobby_message(_lobby_id : int, _user_id : int, _buffer : String, _chat_type : int) -> void:
-	return
-
-
-func _on_lobby_chat_update(_lobby_id: int, _change_id: int, _making_change_id: int, _chat_state: int) -> void:
-	return
-
-
 func create_new_game_lobby(host_port: int = -1, restore_snapshot: Dictionary = {}) -> void:
 	var options = _get_options()
 	if options == null:
