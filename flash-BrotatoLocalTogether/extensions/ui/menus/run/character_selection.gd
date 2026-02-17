@@ -23,7 +23,6 @@ var selections_by_string_key : Dictionary = {}
 var username_labels = []
 var external_focus = false
 var lobby_member_count_at_scene_init : int = -1
-var lobby_reload_pending : bool = false
 
 
 func _enter_tree() -> void:
@@ -96,23 +95,7 @@ func _ready():
 		
 		_update_username_labels()
 		lobby_member_count_at_scene_init = steam_connection.lobby_members.size()
-		CoopService.clear_coop_players()
-		var used_devices := {0: true}
-		var local_added := false
-		
-		for member_index in range(steam_connection.lobby_members.size()):
-			var member_id = steam_connection.lobby_members[member_index]
-			if member_id == steam_connection.steam_id:
-				CoopService._add_player(0, MULTIPLAYER_CLIENT_PLAYER_TYPE)
-				local_added = true
-				_diag("add_player member=%s device=0 local=true" % str(member_index))
-			else:
-				var remote_device = _allocate_remote_device(used_devices)
-				CoopService._add_player(remote_device, MULTIPLAYER_CLIENT_PLAYER_TYPE)
-				_diag("add_player member=%s device=%s local=false" % [str(member_index), str(remote_device)])
-		if not local_added:
-			CoopService._add_player(0, MULTIPLAYER_CLIENT_PLAYER_TYPE)
-			_diag("add_player local fallback device=0")
+		_sync_coop_players_with_lobby()
 			
 		for character_data in _get_all_possible_elements(0):
 			selections_by_string_key[character_item_to_string(character_data)] = character_data
@@ -190,24 +173,35 @@ func _on_lobby_players_updated() -> void:
 
 	if lobby_member_count != lobby_member_count_at_scene_init:
 		lobby_member_count_at_scene_init = lobby_member_count
-		if lobby_member_count != RunData.get_player_count():
-			_request_reload_after_lobby_update()
-			return
+		# Избегаем смены сцены: reload давал гонку deferred grab_focus и !is_inside_tree.
+		_sync_coop_players_with_lobby()
 
 	_update_username_labels()
 
 
-func _request_reload_after_lobby_update() -> void:
-	if lobby_reload_pending:
-		return
-	lobby_reload_pending = true
-	call_deferred("_reload_after_lobby_update")
+func _sync_coop_players_with_lobby() -> void:
+	set_process_input(false)
+	CoopService.clear_coop_players()
+	var used_devices := {0: true}
+	var local_added := false
 
+	for member_index in range(steam_connection.lobby_members.size()):
+		var member_id = steam_connection.lobby_members[member_index]
+		if member_id == steam_connection.steam_id:
+			CoopService._add_player(0, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+			local_added = true
+			_diag("add_player member=%s device=0 local=true" % str(member_index))
+		else:
+			var remote_device = _allocate_remote_device(used_devices)
+			CoopService._add_player(remote_device, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+			_diag("add_player member=%s device=%s local=false" % [str(member_index), str(remote_device)])
 
-func _reload_after_lobby_update() -> void:
-	lobby_reload_pending = false
-	_diag("reload_after_lobby_update")
-	reload_scene()
+	if not local_added:
+		CoopService._add_player(0, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+		_diag("add_player local fallback device=0")
+
+	if _input_ready:
+		set_process_input(true)
 
 
 func _update_username_labels() -> void:
