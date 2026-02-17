@@ -306,6 +306,10 @@ func leave_game_lobby() -> void:
 		game_lobby_id = 0
 
 
+func leave_lan_session() -> void:
+	leave_game_lobby()
+
+
 func _on_lobby_created(connect: int, created_lobby_id: int) -> void:
 	print("Created Lobby")
 	if connect == 1:
@@ -334,6 +338,23 @@ func request_lobby_search() -> void:
 	Steam.addRequestLobbyListStringFilter("lobby_type", GAME_LOBBY_TYPE, Steam.LOBBY_COMPARISON_EQUAL)
 	Steam.addRequestLobbyListStringFilter("lobby_status", "OPEN", Steam.LOBBY_COMPARISON_EQUAL)
 	Steam.requestLobbyList()
+
+
+func discover_lan_sessions() -> void:
+	request_lobby_search()
+
+
+func join_game_lobby(lobby_id: String) -> void:
+	var lobby_id_text = lobby_id.strip_edges()
+	if lobby_id_text.empty():
+		return
+	if not lobby_id_text.is_valid_integer():
+		return
+	Steam.joinLobby(int(lobby_id_text))
+
+
+func join_lan_session(endpoint: String) -> void:
+	join_game_lobby(endpoint)
 
 
 func _on_lobby_joined(lobby_id: int, _permissions: int, _locked: bool, response: int) -> void:
@@ -412,6 +433,10 @@ func _on_lobby_message(lobby_id : int, user_id : int, buffer : String, _chat_typ
 
 func create_new_game_lobby() -> void:
 	Steam.createLobby(Steam.LOBBY_TYPE_PUBLIC, 4)
+
+
+func create_lan_session(_host_port: int = -1, _restore_snapshot: Dictionary = {}) -> void:
+	create_new_game_lobby()
 
 
 # Sends data to a receipient or to all others if target_id is -1

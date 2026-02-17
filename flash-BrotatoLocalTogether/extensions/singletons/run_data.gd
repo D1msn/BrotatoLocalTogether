@@ -10,7 +10,7 @@ func init_multiplayer() -> void:
 	network_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 	
-	network_connection.leave_game_lobby()
+	network_connection.leave_lan_session()
 
 
 func lock_player_shop_item(item_data: ItemParentData, wave_value: int, player_index: int)->void :

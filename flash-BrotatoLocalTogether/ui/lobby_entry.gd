@@ -14,4 +14,4 @@ func _ready():
 
 
 func _on_join_button_pressed():
-	network_connection.join_game_lobby(String(lobby_id))
+	network_connection.join_lan_session(String(lobby_id))

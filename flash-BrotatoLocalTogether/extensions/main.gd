@@ -956,7 +956,7 @@ func _on_EndWaveTimer_timeout()->void :
 	if in_multiplayer_game:
 		if network_connection.is_host():
 			if _is_run_lost or RunData.is_last_wave() or _is_run_won:
-				network_connection.leave_game_lobby()
+				network_connection.leave_lan_session()
 			._on_EndWaveTimer_timeout()
 	else:
 		._on_EndWaveTimer_timeout()

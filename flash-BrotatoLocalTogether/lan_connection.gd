@@ -1,4 +1,5 @@
 extends "res://mods-unpacked/flash-BrotatoLocalTogether/protocol_connection.gd"
+# LAN-соединение поверх ENet с сохранением обратной совместимости API.
 
 const SessionPersistence = preload("res://mods-unpacked/flash-BrotatoLocalTogether/session_persistence.gd")
 const SessionRegistry = preload("res://mods-unpacked/flash-BrotatoLocalTogether/session_registry.gd")
@@ -126,7 +127,7 @@ func _ready() -> void:
 	ping_timer.start(2.0)
 
 	_emit_resume_hints()
-	request_lobby_search()
+	discover_lan_sessions()
 
 
 func _physics_process(_delta : float) -> void:
@@ -136,6 +137,10 @@ func _physics_process(_delta : float) -> void:
 func _notification(what: int) -> void:
 	if what == MainLoop.NOTIFICATION_WM_QUIT_REQUEST or what == NOTIFICATION_PREDELETE:
 		_flush_snapshot(true)
+
+
+func create_lan_session(host_port: int = -1, restore_snapshot: Dictionary = {}) -> void:
+	create_new_game_lobby(host_port, restore_snapshot)
 
 
 func create_new_game_lobby(host_port: int = -1, restore_snapshot: Dictionary = {}) -> void:
@@ -221,6 +226,10 @@ func create_new_game_lobby(host_port: int = -1, restore_snapshot: Dictionary = {
 	_flush_snapshot(true)
 
 
+func join_lan_session(endpoint: String) -> void:
+	join_game_lobby(endpoint)
+
+
 func join_game_lobby(endpoint: String) -> void:
 	var options = _get_options()
 	if options == null:
@@ -253,6 +262,10 @@ func join_game_lobby(endpoint: String) -> void:
 	options.set_last_join_endpoint(pending_join_endpoint)
 	options.joining_multiplayer_lobby = true
 	options.in_multiplayer_game = false
+
+
+func leave_lan_session() -> void:
+	leave_game_lobby()
 
 
 func leave_game_lobby() -> void:
@@ -301,6 +314,10 @@ func leave_game_lobby() -> void:
 		options.in_multiplayer_game = false
 
 	emit_signal("lobby_players_updated")
+
+
+func discover_lan_sessions() -> void:
+	request_lobby_search()
 
 
 func request_lobby_search() -> void:

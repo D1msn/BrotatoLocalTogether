@@ -210,7 +210,7 @@ func _on_create_lobby_button_pressed() -> void:
 	host_port_input.text = str(host_port)
 	brotatogether_options.set_host_port(host_port)
 	_commit_advertise_ip()
-	network_connection.create_new_game_lobby(host_port)
+	network_connection.create_lan_session(host_port)
 
 
 func _on_join_endpoint_text_entered(_value: String) -> void:
@@ -231,7 +231,7 @@ func _on_join_endpoint_button_pressed() -> void:
 
 	join_endpoint_input.text = endpoint
 	brotatogether_options.set_last_join_endpoint(endpoint)
-	network_connection.join_game_lobby(endpoint)
+	network_connection.join_lan_session(endpoint)
 
 
 func _on_resume_snapshot_button_pressed() -> void:
@@ -269,7 +269,7 @@ func _on_refresh_lobbies_button_pressed() -> void:
 		child.queue_free()
 	shown_lobbies.clear()
 
-	network_connection.request_lobby_search()
+	network_connection.discover_lan_sessions()
 	_update_resume_button_state()
 
 
