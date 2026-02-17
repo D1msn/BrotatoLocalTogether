@@ -27,6 +27,7 @@ const ENVELOPE_KEY_SENT_AT_MSEC := "SENT_AT_MSEC"
 const ENVELOPE_KEY_PAYLOAD := "PAYLOAD"
 const ENVELOPE_KEY_COMPRESSED := "COMPRESSED"
 const COMPRESSION_THRESHOLD_BYTES := 512
+const MAX_DECOMPRESSED_BYTES := 8 * 1024 * 1024
 const LOG_NAME := "BrotatoLocalTogether:SessionConnection"
 const NETWORK_METRICS_NODE_NAME := "NetworkMetrics"
 const DIAGNOSTICS_LOGGER_PATH := "res://mods-unpacked/flash-BrotatoLocalTogether/logging/diagnostics_logger.gd"
@@ -64,6 +65,7 @@ var pending_restore_snapshot : Dictionary = {}
 var pending_client_recovery_state : Dictionary = {}
 var attempted_tokenless_retry : bool = false
 var network_metrics_node : Node = null
+var _last_seq_by_peer : Dictionary = {}
 var scene_transition_active : bool = false
 var scene_transition_role : String = ""
 var scene_transition_id : String = ""
@@ -98,6 +100,7 @@ func _ready() -> void:
 	local_player_token = ""
 	pending_restore_snapshot.clear()
 	pending_client_recovery_state.clear()
+	_last_seq_by_peer.clear()
 	last_rejection_reason = ""
 	attempted_tokenless_retry = false
 	_reset_scene_transition_state()
@@ -218,6 +221,7 @@ func create_new_game_lobby(host_port: int = -1, restore_snapshot: Dictionary = {
 	slot_by_peer_id.clear()
 	peer_id_by_slot.clear()
 	token_by_peer_id.clear()
+	_last_seq_by_peer.clear()
 
 	known_peer_names[steam_id] = host_name
 	slot_by_peer_id[steam_id] = 0
@@ -302,6 +306,7 @@ func leave_game_lobby() -> void:
 	slot_by_peer_id.clear()
 	peer_id_by_slot.clear()
 	token_by_peer_id.clear()
+	_last_seq_by_peer.clear()
 	cached_state_snapshot.clear()
 	active_session.clear()
 	session_id = ""
@@ -452,12 +457,18 @@ remote func _receive_enet_packet(message_type : int, packet_data : PoolByteArray
 	if bool(packet.get("compressed", false)):
 		var compressed_payload = packet.get("payload_compressed", PoolByteArray())
 		if not (compressed_payload is PoolByteArray):
+			ModLoaderLog.warning("Compressed payload is not a PoolByteArray", LOG_NAME)
 			return
-		var unpacked_data = compressed_payload.decompress_dynamic(-1, File.COMPRESSION_GZIP)
+		var unpacked_data = compressed_payload.decompress_dynamic(MAX_DECOMPRESSED_BYTES, File.COMPRESSION_GZIP)
 		if unpacked_data.size() <= 0:
+			ModLoaderLog.warning("Decompression failed or empty", LOG_NAME)
+			return
+		if unpacked_data.size() >= MAX_DECOMPRESSED_BYTES:
+			ModLoaderLog.warning("Decompressed payload exceeds limit: %d bytes" % unpacked_data.size(), LOG_NAME)
 			return
 		var unpacked_payload = bytes2var(unpacked_data)
 		if not (unpacked_payload is Dictionary):
+			ModLoaderLog.warning("Decompressed payload is not a Dictionary", LOG_NAME)
 			return
 		packet["payload"] = unpacked_payload
 
@@ -465,7 +476,8 @@ remote func _receive_enet_packet(message_type : int, packet_data : PoolByteArray
 		int(packet.get("message_type", message_type)),
 		packet.get("payload", {}),
 		sender_id,
-		packet_data.size()
+		packet_data.size(),
+		int(packet.get("sequence", -1))
 	)
 
 
@@ -473,11 +485,14 @@ func read_p2p_packet() -> void:
 	return
 
 
-func _dispatch_incoming_packet(channel : int, data : Dictionary, sender_id : int, packet_size: int = -1) -> void:
+func _dispatch_incoming_packet(channel : int, data : Dictionary, sender_id : int, packet_size: int = -1, packet_seq: int = -1) -> void:
 	if packet_size >= 0:
 		_record_packet_received_metrics(channel, packet_size)
 	if not _is_allowed_sender_for_message(channel, sender_id):
 		ModLoaderLog.warning("Rejected packet from unknown peer %d" % sender_id, LOG_NAME)
+		return
+	if packet_seq > 0 and _is_duplicate_packet(sender_id, channel, packet_seq):
+		ModLoaderLog.info("Dropped duplicate packet type=%d seq=%d from peer=%d" % [channel, packet_seq, sender_id], LOG_NAME)
 		return
 	if not _is_valid_phase_packet(channel, data, sender_id):
 		return
@@ -626,6 +641,35 @@ func _is_valid_phase_packet(message_type: int, data: Dictionary, sender_id: int)
 	return false
 
 
+func _is_duplicate_packet(sender_id: int, message_type: int, seq: int) -> bool:
+	if seq <= 0:
+		return false
+	if not _last_seq_by_peer.has(sender_id):
+		_last_seq_by_peer[sender_id] = {}
+
+	var peer_seq_state: Dictionary = _last_seq_by_peer[sender_id]
+	if not peer_seq_state.has(message_type):
+		peer_seq_state[message_type] = seq
+		_last_seq_by_peer[sender_id] = peer_seq_state
+		return false
+
+	var last_seq = int(peer_seq_state[message_type])
+
+	if _is_unreliable_message(message_type):
+		if seq <= last_seq:
+			return true
+		peer_seq_state[message_type] = seq
+		_last_seq_by_peer[sender_id] = peer_seq_state
+		return false
+
+	if seq <= last_seq:
+		return true
+
+	peer_seq_state[message_type] = seq
+	_last_seq_by_peer[sender_id] = peer_seq_state
+	return false
+
+
 func _target_phase_for_message(message_type: int, data: Dictionary) -> String:
 	match message_type:
 		SESSION_MESSAGE_REGISTER_ACK:
@@ -742,6 +786,8 @@ func _on_network_peer_connected(peer_id : int) -> void:
 
 func _on_network_peer_disconnected(peer_id : int) -> void:
 	player_latencies.erase(peer_id)
+	if _last_seq_by_peer.has(peer_id):
+		_last_seq_by_peer.erase(peer_id)
 
 	if is_host():
 		if scene_transition_active and scene_transition_role == SCENE_TRANSITION_ROLE_HOST:
@@ -812,6 +858,7 @@ func _on_connected_to_server() -> void:
 	slot_by_peer_id.clear()
 	peer_id_by_slot.clear()
 	token_by_peer_id.clear()
+	_last_seq_by_peer.clear()
 	known_peer_names[game_lobby_owner_id] = "Host"
 	slot_by_peer_id[game_lobby_owner_id] = 0
 	peer_id_by_slot[0] = game_lobby_owner_id
@@ -1117,6 +1164,7 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 		"payload": {},
 		"compressed": false,
 		"payload_compressed": PoolByteArray(),
+		"sequence": -1,
 	}
 	if not (decoded_payload is Dictionary):
 		result["ok"] = false
@@ -1140,10 +1188,14 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 	var remote_protocol_version = int(decoded_dict.get(ENVELOPE_KEY_PROTOCOL_VERSION, 0))
 	var parsed_message_type = int(decoded_dict.get(ENVELOPE_KEY_MESSAGE_TYPE, fallback_message_type))
 	var remote_session_id = String(decoded_dict.get(ENVELOPE_KEY_SESSION_ID, "")).strip_edges()
+	var packet_sequence = int(decoded_dict.get(ENVELOPE_KEY_SEQUENCE, -1))
 	var payload_data = decoded_dict.get(ENVELOPE_KEY_PAYLOAD, {})
 	var payload_is_compressed = bool(decoded_dict.get(ENVELOPE_KEY_COMPRESSED, false))
 
 	if parsed_message_type != fallback_message_type:
+		result["ok"] = false
+		return result
+	if packet_sequence <= 0:
 		result["ok"] = false
 		return result
 
@@ -1175,6 +1227,7 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 		result["payload"] = payload_data
 
 	result["message_type"] = parsed_message_type
+	result["sequence"] = packet_sequence
 	return result
 
 
