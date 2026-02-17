@@ -2,7 +2,7 @@ extends "res://ui/menus/run/weapon_selection.gd"
 
 const SignalUtils = preload("res://mods-unpacked/flash-BrotatoLocalTogether/signal_utils.gd")
 
-var steam_connection
+var network_connection
 var brotatogether_options
 var is_multiplayer_lobby = false
 
@@ -13,7 +13,7 @@ var external_focus = false
 var inventory_maps : Array
 
 func _ready():
-	steam_connection = $"/root/NetworkConnection"
+	network_connection = $"/root/NetworkConnection"
 	
 	_connect_network_signal("player_focused_weapon", "_player_focused_weapon")
 	_connect_network_signal("player_selected_weapon", "_player_selected_weapon")
@@ -44,15 +44,15 @@ func _exit_tree() -> void:
 
 
 func _connect_network_signal(signal_name: String, method_name: String) -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
-	var _connect_error = SignalUtils.safe_connect(steam_connection, signal_name, self, method_name)
+	var _connect_error = SignalUtils.safe_connect(network_connection, signal_name, self, method_name)
 
 
 func _disconnect_network_signal(signal_name: String, method_name: String) -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
-	SignalUtils.safe_disconnect(steam_connection, signal_name, self, method_name)
+	SignalUtils.safe_disconnect(network_connection, signal_name, self, method_name)
 
 
 func weapon_item_to_string(item : Resource) -> String:
@@ -89,7 +89,7 @@ func _on_element_focused(element:InventoryElement, inventory_player_index:int, _
 			element_string = "RANDOM"
 		
 		if not external_focus:
-			steam_connection.weapon_focused(element_string)
+			network_connection.weapon_focused(element_string)
 		else:
 			external_focus = false
 
@@ -127,19 +127,19 @@ func _set_selected_element(p_player_index:int) -> void:
 		return
 	
 	# This happens during the base _ready for characters with no weapon slots.
-	if not steam_connection:
+	if not network_connection:
 		_has_player_selected[p_player_index] = true
 		return
 	
 	._set_selected_element(p_player_index)
 	
-	if steam_connection.get_lobby_index_for_player(steam_connection.steam_id) == p_player_index:
-		steam_connection.weapon_selected()
+	if network_connection.get_lobby_index_for_player(network_connection.steam_id) == p_player_index:
+		network_connection.weapon_selected()
 
 
 func _on_selections_completed() -> void:
 	if is_multiplayer_lobby:
-		if not steam_connection.is_host():
+		if not network_connection.is_host():
 			return
 	else:
 		._on_selections_completed()
@@ -170,7 +170,7 @@ func _on_selections_completed() -> void:
 			selected_weapons.push_back(weapon_item_to_string(owned_weapon))
 		all_selected_weapons.push_back(selected_weapons)
 	
-	steam_connection.send_weapon_selection_completed(all_selected_weapons)
+	network_connection.send_weapon_selection_completed(all_selected_weapons)
 	
 	_request_host_scene_transition(MenuData.difficulty_selection_scene)
 
@@ -194,13 +194,13 @@ func _request_host_scene_transition(target_scene: String) -> void:
 	if not is_multiplayer_lobby:
 		_change_scene(normalized_target)
 		return
-	if steam_connection == null:
+	if network_connection == null:
 		_change_scene(normalized_target)
 		return
-	if not steam_connection.is_host():
+	if not network_connection.is_host():
 		return
-	if steam_connection.has_method("start_scene_transition"):
-		var started = bool(steam_connection.start_scene_transition(normalized_target))
+	if network_connection.has_method("start_scene_transition"):
+		var started = bool(network_connection.start_scene_transition(normalized_target))
 		if started:
 			return
 

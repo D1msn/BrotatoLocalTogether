@@ -5,7 +5,7 @@ var ClientAttackBehavior = load("res://mods-unpacked/flash-BrotatoLocalTogether/
 var explosion_scene = load("res://projectiles/explosion.tscn")
 var DataNode = load("res://mods-unpacked/flash-BrotatoLocalTogether/data_node.gd")
 
-var steam_connection
+var network_connection
 var brotatogether_options
 var in_multiplayer_game = false
 
@@ -95,8 +95,8 @@ enum ProjectileState {
 func _ready():
 	_reset_core_trace()
 	_append_core_trace("_ready start")
-	steam_connection = get_node_or_null("/root/NetworkConnection")
-	if steam_connection == null:
+	network_connection = get_node_or_null("/root/NetworkConnection")
+	if network_connection == null:
 		_core_warn("Не найден /root/NetworkConnection, core-main отключен для текущей сцены.")
 		_append_core_trace("_ready abort: no /root/NetworkConnection")
 		return
@@ -129,11 +129,11 @@ func _ready():
 		
 		_connect_network_signal("host_entered_shop", "_host_entered_shop")
 		
-		my_player_index = steam_connection.get_my_index()
-		_core_info("core-main активен, safe_core_mode=%s, is_host=%s" % [str(safe_core_mode), str(steam_connection.is_host())])
+		my_player_index = network_connection.get_my_index()
+		_core_info("core-main активен, safe_core_mode=%s, is_host=%s" % [str(safe_core_mode), str(network_connection.is_host())])
 		_append_core_trace(
 			"_ready multiplayer: is_host=%s my_player_index=%s"
-			% [str(steam_connection.is_host()), str(my_player_index)]
+			% [str(network_connection.is_host()), str(my_player_index)]
 		)
 		
 		call_deferred("multiplayer_ready")
@@ -146,7 +146,7 @@ func _ready():
 func _exit_tree() -> void:
 	in_multiplayer_game = false
 	waiting_to_start_round = false
-	if steam_connection != null:
+	if network_connection != null:
 		_disconnect_network_signal("client_status_received", "_client_status_received")
 		_disconnect_network_signal("host_starts_round", "_host_starts_round")
 		_disconnect_network_signal("state_update", "_state_update")
@@ -161,11 +161,11 @@ func _exit_tree() -> void:
 
 
 func _connect_network_signal(signal_name: String, method_name: String) -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
-	if steam_connection.is_connected(signal_name, self, method_name):
+	if network_connection.is_connected(signal_name, self, method_name):
 		return
-	var connect_result = steam_connection.connect(signal_name, self, method_name)
+	var connect_result = network_connection.connect(signal_name, self, method_name)
 	if connect_result != OK:
 		_core_warn("Не удалось подключить сигнал %s -> %s (код %s)." % [signal_name, method_name, str(connect_result)])
 		_append_core_trace("signal connect failed: %s -> %s (%s)" % [signal_name, method_name, str(connect_result)])
@@ -174,11 +174,11 @@ func _connect_network_signal(signal_name: String, method_name: String) -> void:
 
 
 func _disconnect_network_signal(signal_name: String, method_name: String) -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
-	if not steam_connection.is_connected(signal_name, self, method_name):
+	if not network_connection.is_connected(signal_name, self, method_name):
 		return
-	steam_connection.disconnect(signal_name, self, method_name)
+	network_connection.disconnect(signal_name, self, method_name)
 	_append_core_trace("signal disconnected: %s -> %s" % [signal_name, method_name])
 
 
@@ -262,13 +262,13 @@ func _physics_process(delta : float):
 		_last_physics_trace_msec = now_msec
 		_append_core_trace(
 			"_physics_process tick: host=%s send_timer=%.4f"
-			% [str(steam_connection != null and steam_connection.is_host()), send_timer]
+			% [str(network_connection != null and network_connection.is_host()), send_timer]
 		)
 	
 	send_timer -= delta
 	if send_timer <= 0.0:
 		send_timer = SEND_RATE
-		if steam_connection.is_host():
+		if network_connection.is_host():
 			_send_game_state()
 		else:
 			_send_client_position()
@@ -277,7 +277,7 @@ func _physics_process(delta : float):
 func request_immediate_network_flush() -> void:
 	if not in_multiplayer_game:
 		return
-	if steam_connection == null or not steam_connection.is_host():
+	if network_connection == null or not network_connection.is_host():
 		return
 	send_timer = 0.0
 
@@ -287,7 +287,7 @@ func _process(_delta):
 		return
 
 	if waiting_to_start_round:
-		if steam_connection.is_host():
+		if network_connection.is_host():
 			var all_players_entered = true
 			for player_index in RunData.get_player_count():
 				if not player_in_scene[player_index]:
@@ -297,11 +297,11 @@ func _process(_delta):
 				waiting_to_start_round = false
 				_wave_timer.start()
 				_wave_timer.paused = false
-				steam_connection.send_round_start()
+				network_connection.send_round_start()
 
 
 func _send_game_state() -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		_core_warn_once("send_state_no_connection", "Пропущена отправка state: нет подключения.")
 		_append_core_trace("_send_game_state skipped: no connection")
 		return
@@ -418,7 +418,7 @@ func _send_game_state() -> void:
 				else:
 					size_by_key[key] = compressed_size
 	
-	steam_connection.send_game_state(state_dict)
+	network_connection.send_game_state(state_dict)
 	_append_core_trace(
 		"_send_game_state done: players=%s enemies=%s bosses=%s safe_core_mode=%s"
 		% [
@@ -701,13 +701,13 @@ func _send_client_position() -> void:
 	if in_postwave_menu:
 		var player_container = _coop_upgrades_ui._get_player_container(my_player_index)
 		var focus_string = _string_for_menu_focus(player_container)
-		steam_connection.send_client_menu_focus(
+		network_connection.send_client_menu_focus(
 			{
 				"FOCUS" : focus_string
 			}
 		)
 	else:
-		steam_connection.send_client_position(_dictionary_for_player(_players[my_player_index], my_player_index))
+		network_connection.send_client_position(_dictionary_for_player(_players[my_player_index], my_player_index))
 	_append_core_trace("_send_client_position done: index=%s postwave=%s" % [str(my_player_index), str(in_postwave_menu)])
 
 
@@ -740,7 +740,7 @@ func _dictionary_for_player(player, player_index) -> Dictionary:
 		weapons_array.push_back(weapon_dict)
 	player_dict[EntityState.ENTITY_STATE_PLAYER_WEAPONS] = weapons_array
 	
-	if steam_connection.is_host():
+	if network_connection.is_host():
 		player_dict[EntityState.ENTITY_STATE_PLAYER_GOLD] = RunData.players_data[player_index].gold
 		player_dict[EntityState.ENTITY_STATE_PLAYER_CURRENT_XP] = RunData.players_data[player_index].current_xp
 		player_dict[EntityState.ENTITY_STATE_PLAYER_NEXT_LEVEL_XP] = RunData.get_next_level_xp_needed(player_index)
@@ -791,7 +791,7 @@ func _update_player_position(player_dict : Dictionary, player_index : int) -> vo
 			return
 		player.call_deferred("update_external_player_position", player_dict)
 	
-	if not steam_connection.is_host():
+	if not network_connection.is_host():
 		_players_ui[player_index].call_deferred("update_level_label")
 		player.call_deferred("update_client_player", player_dict, player_index)
 		
@@ -905,9 +905,9 @@ func multiplayer_ready():
 	waiting_to_start_round = true
 	_append_core_trace("multiplayer_ready: wave timer stopped")
 
-	if not steam_connection.is_host():
-		if steam_connection.has_method("consume_pending_runtime_recovery_state"):
-			var recovery_state = steam_connection.consume_pending_runtime_recovery_state()
+	if not network_connection.is_host():
+		if network_connection.has_method("consume_pending_runtime_recovery_state"):
+			var recovery_state = network_connection.consume_pending_runtime_recovery_state()
 			if recovery_state is Dictionary and recovery_state.size() > 0:
 				waiting_to_start_round = false
 				_state_update(recovery_state)
@@ -928,7 +928,7 @@ func _host_starts_round() -> void:
 
 func _on_WaveTimer_timeout() -> void:
 	if in_multiplayer_game:
-		if steam_connection.is_host():
+		if network_connection.is_host():
 			._on_WaveTimer_timeout()
 			return
 		else:
@@ -954,9 +954,9 @@ func _on_WaveTimer_timeout() -> void:
 
 func _on_EndWaveTimer_timeout()->void :
 	if in_multiplayer_game:
-		if steam_connection.is_host():
+		if network_connection.is_host():
 			if _is_run_lost or RunData.is_last_wave() or _is_run_won:
-				steam_connection.leave_game_lobby()
+				network_connection.leave_game_lobby()
 			._on_EndWaveTimer_timeout()
 	else:
 		._on_EndWaveTimer_timeout()
@@ -1482,7 +1482,7 @@ func _update_menu(menu_dict : Dictionary) -> void:
 
 
 func _update_client_focus(data : Dictionary, player_index : int) -> void:
-	if steam_connection.is_host() and player_index != my_player_index:
+	if network_connection.is_host() and player_index != my_player_index:
 		var player_container = _coop_upgrades_ui._get_player_container(player_index)
 		_focus_for_string(player_container, data["FOCUS"])
 
@@ -1558,8 +1558,8 @@ func _client_discard_button_pressed(player_index : int) -> void:
 func _host_entered_shop() -> void:
 	# Legacy fallback: в актуальном протоколе переход выполняется через
 	# SCENE_PREPARE/READY/COMMIT. Если переход уже активен, не дублируем смену сцены.
-	if steam_connection != null and steam_connection.has_method("is_scene_transition_active"):
-		if bool(steam_connection.is_scene_transition_active()):
+	if network_connection != null and network_connection.has_method("is_scene_transition_active"):
+		if bool(network_connection.is_scene_transition_active()):
 			return
 	_change_scene(RunData.get_shop_scene_path())
 
@@ -1573,7 +1573,7 @@ func connect_visual_effects(unit: Unit)->void :
 	.connect_visual_effects(unit)
 	
 	if in_multiplayer_game:
-		if steam_connection.is_host():
+		if network_connection.is_host():
 			var _error_floating_text = unit.connect("took_damage", self, "_on_unit_took_damage")
 
 

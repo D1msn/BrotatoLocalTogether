@@ -1,18 +1,18 @@
 extends "res://visual_effects/floating_text/floating_text_manager.gd"
 
-var steam_connection
+var network_connection
 var brotatogether_options
 var in_multiplayer_game = false
 var is_host = false
 
 
 func _ready():
-	steam_connection = $"/root/NetworkConnection"
+	network_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 	in_multiplayer_game = brotatogether_options.in_multiplayer_game
 	
 	if in_multiplayer_game:
-		is_host = steam_connection.is_host()
+		is_host = network_connection.is_host()
 
 
 func display(value: String, text_pos: Vector2, color: Color = Color.white, icon: Resource = null, p_duration: float = duration, always_display: bool = false, p_direction: Vector2 = direction, need_translate: bool = true, icon_scale: Vector2 = Vector2(0.5, 0.5))->void :

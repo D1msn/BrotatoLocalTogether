@@ -1,6 +1,6 @@
 extends "res://global/effects_manager.gd"
 
-var steam_connection
+var network_connection
 var brotatogether_options
 var in_multiplayer_game = false
 var is_host = false
@@ -19,12 +19,12 @@ func _request_immediate_vfx_flush() -> void:
 
 
 func _ready():
-	steam_connection = $"/root/NetworkConnection"
+	network_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 	in_multiplayer_game = brotatogether_options.in_multiplayer_game
 	
 	if in_multiplayer_game:
-		is_host = steam_connection.is_host()
+		is_host = network_connection.is_host()
 
 
 func play_hit_particles(effect_pos: Vector2, direction: Vector2, effect_scale: float) -> void:

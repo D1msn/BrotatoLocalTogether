@@ -1,11 +1,11 @@
 extends "res://global/entity_spawner.gd"
 
-var steam_connection
+var network_connection
 var brotatogether_options
 
 
 func _ready():
-	steam_connection = $"/root/NetworkConnection"
+	network_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 
 
@@ -14,7 +14,7 @@ func spawn(queue_from: Array, player_index: = - 1) -> void:
 		.spawn(queue_from, player_index)
 		return
 	
-	if not steam_connection.is_host():
+	if not network_connection.is_host():
 		queue_from.pop_back()
 		return
 	

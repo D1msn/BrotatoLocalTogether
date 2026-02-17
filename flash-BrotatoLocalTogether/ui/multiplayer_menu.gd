@@ -10,7 +10,7 @@ onready var controls_root : VBoxContainer = $"HBoxContainer/ChatContainer2/VBoxC
 onready var primary_controls_row : HBoxContainer = $"HBoxContainer/ChatContainer2/VBoxContainer/HBoxContainer"
 onready var lobbies_scroll : ScrollContainer = $"HBoxContainer/ChatContainer2/VBoxContainer/ScrollContainer"
 
-var steam_connection
+var network_connection
 var brotatogether_options
 
 var host_port_input : LineEdit
@@ -29,15 +29,15 @@ var shown_lobbies : Dictionary = {}
 
 
 func _ready() -> void:
-	steam_connection = $"/root/NetworkConnection"
-	SignalUtils.safe_connect(steam_connection, "game_lobby_found", self, "_game_lobby_found")
+	network_connection = $"/root/NetworkConnection"
+	SignalUtils.safe_connect(network_connection, "game_lobby_found", self, "_game_lobby_found")
 
 	brotatogether_options = $"/root/BrotogetherOptions"
 	_build_network_controls()
 
-	for message in steam_connection.pending_system_messages:
+	for message in network_connection.pending_system_messages:
 		_append_system_message(String(message))
-	steam_connection.pending_system_messages.clear()
+	network_connection.pending_system_messages.clear()
 
 	if is_inside_tree():
 		call_deferred("_safe_focus_create_lobby_button")
@@ -46,8 +46,8 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
-	if steam_connection != null:
-		SignalUtils.safe_disconnect(steam_connection, "game_lobby_found", self, "_game_lobby_found")
+	if network_connection != null:
+		SignalUtils.safe_disconnect(network_connection, "game_lobby_found", self, "_game_lobby_found")
 	if host_port_input != null:
 		SignalUtils.safe_disconnect(host_port_input, "text_entered", self, "_on_host_port_text_entered")
 	if advertise_ip_input != null:
@@ -157,7 +157,7 @@ func _build_network_controls() -> void:
 func _update_resume_button_state() -> void:
 	if resume_snapshot_button == null:
 		return
-	resume_snapshot_button.disabled = not steam_connection.has_recovery_snapshot()
+	resume_snapshot_button.disabled = not network_connection.has_recovery_snapshot()
 
 
 func _append_system_message(message : String) -> void:
@@ -210,7 +210,7 @@ func _on_create_lobby_button_pressed() -> void:
 	host_port_input.text = str(host_port)
 	brotatogether_options.set_host_port(host_port)
 	_commit_advertise_ip()
-	steam_connection.create_new_game_lobby(host_port)
+	network_connection.create_new_game_lobby(host_port)
 
 
 func _on_join_endpoint_text_entered(_value: String) -> void:
@@ -231,25 +231,25 @@ func _on_join_endpoint_button_pressed() -> void:
 
 	join_endpoint_input.text = endpoint
 	brotatogether_options.set_last_join_endpoint(endpoint)
-	steam_connection.join_game_lobby(endpoint)
+	network_connection.join_game_lobby(endpoint)
 
 
 func _on_resume_snapshot_button_pressed() -> void:
-	if not steam_connection.has_recovery_snapshot():
+	if not network_connection.has_recovery_snapshot():
 		_append_system_message("No recovery snapshot found")
 		_update_resume_button_state()
 		return
 
-	if not steam_connection.resume_from_latest_snapshot():
+	if not network_connection.resume_from_latest_snapshot():
 		_append_system_message("Failed to restore snapshot")
 		_update_resume_button_state()
 
 
 func _on_reset_sessions_button_pressed() -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
 
-	steam_connection.reset_saved_sessions()
+	network_connection.reset_saved_sessions()
 	if join_endpoint_input != null:
 		join_endpoint_input.text = ""
 	_append_system_message("Session data reset. Start from clean state.")
@@ -257,10 +257,10 @@ func _on_reset_sessions_button_pressed() -> void:
 
 
 func _on_log_metrics_button_pressed() -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
-	if steam_connection.has_method("dump_network_metrics_to_log"):
-		steam_connection.dump_network_metrics_to_log()
+	if network_connection.has_method("dump_network_metrics_to_log"):
+		network_connection.dump_network_metrics_to_log()
 		_append_system_message("Network metrics logged.")
 
 
@@ -269,7 +269,7 @@ func _on_refresh_lobbies_button_pressed() -> void:
 		child.queue_free()
 	shown_lobbies.clear()
 
-	steam_connection.request_lobby_search()
+	network_connection.request_lobby_search()
 	_update_resume_button_state()
 
 

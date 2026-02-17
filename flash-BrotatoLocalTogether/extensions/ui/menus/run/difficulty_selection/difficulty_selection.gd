@@ -2,7 +2,7 @@ extends "res://ui/menus/run/difficulty_selection/difficulty_selection.gd"
 
 const SignalUtils = preload("res://mods-unpacked/flash-BrotatoLocalTogether/signal_utils.gd")
 
-var steam_connection
+var network_connection
 var brotatogether_options
 var is_multiplayer_lobby = false
 
@@ -11,7 +11,7 @@ var selection_by_string_key : Dictionary
 
 
 func _ready():
-	steam_connection = $"/root/NetworkConnection"
+	network_connection = $"/root/NetworkConnection"
 	_connect_network_signal("difficulty_focused", "_difficulty_focused")
 	_connect_network_signal("difficulty_selected", "_difficulty_selected")
 	
@@ -37,23 +37,23 @@ func _exit_tree() -> void:
 func _on_element_focused(element:InventoryElement, inventory_player_index:int, _displayPanelData: bool = true) -> void:
 	# Disregard difficulty updates from clients
 	if is_multiplayer_lobby:
-		if not steam_connection.is_host():
+		if not network_connection.is_host():
 			return
 	
 	._on_element_focused(element, inventory_player_index)
 	
 	if is_multiplayer_lobby:
-		steam_connection.difficulty_focused()
+		network_connection.difficulty_focused()
 
 
 func _on_element_pressed(element: InventoryElement, _inventory_player_index: int) -> void:
 	# Disregard difficulty updates from clients
 	if is_multiplayer_lobby:
-		if not steam_connection.is_host():
+		if not network_connection.is_host():
 			return
 		if not _apply_host_difficulty_selection(element):
 			return
-		steam_connection.difficulty_pressed()
+		network_connection.difficulty_pressed()
 		_request_host_scene_transition(MenuData.game_scene)
 		return
 
@@ -112,15 +112,15 @@ func _request_host_scene_transition(target_scene: String) -> void:
 		if tree != null:
 			var _error = tree.change_scene(normalized_target)
 		return
-	if steam_connection == null:
+	if network_connection == null:
 		var fallback_tree = get_tree()
 		if fallback_tree != null:
 			var _fallback_error = fallback_tree.change_scene(normalized_target)
 		return
-	if not steam_connection.is_host():
+	if not network_connection.is_host():
 		return
-	if steam_connection.has_method("start_scene_transition"):
-		var started = bool(steam_connection.start_scene_transition(normalized_target))
+	if network_connection.has_method("start_scene_transition"):
+		var started = bool(network_connection.start_scene_transition(normalized_target))
 		if started:
 			return
 
@@ -135,7 +135,7 @@ func _difficulty_focused(difficutly : int) -> void:
 	
 	# Hosts don't respect update calls
 	if is_multiplayer_lobby:
-		if steam_connection.is_host():
+		if network_connection.is_host():
 			return
 	
 	var selected_item = null
@@ -150,15 +150,15 @@ func _difficulty_focused(difficutly : int) -> void:
 
 
 func _connect_network_signal(signal_name: String, method_name: String) -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
-	var _connect_error = SignalUtils.safe_connect(steam_connection, signal_name, self, method_name)
+	var _connect_error = SignalUtils.safe_connect(network_connection, signal_name, self, method_name)
 
 
 func _disconnect_network_signal(signal_name: String, method_name: String) -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
-	SignalUtils.safe_disconnect(steam_connection, signal_name, self, method_name)
+	SignalUtils.safe_disconnect(network_connection, signal_name, self, method_name)
 
 
 func _can_use_tree() -> bool:

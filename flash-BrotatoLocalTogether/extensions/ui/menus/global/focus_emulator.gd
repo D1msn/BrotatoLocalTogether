@@ -3,7 +3,7 @@ extends "res://ui/menus/global/focus_emulator.gd"
 const SignalUtils = preload("res://mods-unpacked/flash-BrotatoLocalTogether/signal_utils.gd")
 
 var global_focused_control
-var steam_connection
+var network_connection
 var brotatogether_options
 
 
@@ -53,9 +53,9 @@ func _handle_input(event:InputEvent) -> bool:
 	if tree.current_scene.name == "CoopShop" and brotatogether_options != null and brotatogether_options.in_multiplayer_game:
 		if event is InputEventKey:
 			if event.pressed:
-				if steam_connection == null:
+				if network_connection == null:
 					return ._handle_input(event)
-				var player_container = tree.current_scene._get_coop_player_container(steam_connection.get_my_index())
+				var player_container = tree.current_scene._get_coop_player_container(network_connection.get_my_index())
 				if player_container != null:
 					var carousel = player_container.get("carousel")
 					if carousel != null:
@@ -93,8 +93,8 @@ func _resolve_singletons_if_needed() -> void:
 		return
 	if brotatogether_options == null:
 		brotatogether_options = get_node_or_null("/root/BrotogetherOptions")
-	if steam_connection == null:
-		steam_connection = get_node_or_null("/root/NetworkConnection")
+	if network_connection == null:
+		network_connection = get_node_or_null("/root/NetworkConnection")
 
 
 func _ready_base_safe() -> void:

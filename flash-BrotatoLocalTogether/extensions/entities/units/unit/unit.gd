@@ -36,22 +36,18 @@ var _interp_position_ready: bool = false
 
 
 func reset_interpolation() -> void:
-	_reset_interpolation()
-
-
-func _reset_interpolation() -> void:
 	_interp_buffer.clear()
 	_interp_position_ready = false
 
 
 func _ready() -> void:
 	._ready()
-	_reset_interpolation()
+	reset_interpolation()
 
 
 func respawn() -> void:
 	.respawn()
-	_reset_interpolation()
+	reset_interpolation()
 
 
 func _process(_delta: float) -> void:

@@ -1,13 +1,13 @@
 extends "res://ui/menus/shop/player_gear_container.gd"
 
-var steam_connection
+var network_connection
 var brotatogether_options
 
 var in_multiplayer_game = false
 
 
 func _ready():
-	steam_connection = $"/root/NetworkConnection"
+	network_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 	in_multiplayer_game = brotatogether_options.in_multiplayer_game
 

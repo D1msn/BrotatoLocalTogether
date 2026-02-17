@@ -1,20 +1,20 @@
 extends "res://singletons/sound_manager.gd"
 
-var steam_connection
+var network_connection
 var brotatogether_options
 
 var is_multiplayer_lobby = false
 
 
 func init_multiplayer() -> void:
-	steam_connection = $"/root/NetworkConnection"
+	network_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 
 
 func play(sound: Resource, volume_mod: float = 0.0, pitch_rand: float = 0.0, always_play: bool = false)->void :
-	if steam_connection and brotatogether_options:
+	if network_connection and brotatogether_options:
 		if brotatogether_options.in_multiplayer_game:
-			if steam_connection.is_host():
+			if network_connection.is_host():
 				var sound_dict = {
 					"RESOURCE_PATH" : sound.resource_path,
 				}

@@ -2,10 +2,10 @@ extends "res://projectiles/player_explosion.gd"
 
 
 func start_explosion() -> void:
-	var steam_connection = $"/root/NetworkConnection"
+	var network_connection = $"/root/NetworkConnection"
 	var brotatogether_options = $"/root/BrotogetherOptions"
 	if brotatogether_options.in_multiplayer_game:
-		if steam_connection.is_host():
+		if network_connection.is_host():
 			var explosion_dict = {
 				"X_POS" : global_position.x,
 				"Y_POS" : global_position.y,

@@ -7,7 +7,7 @@ const MULTIPLAYER_CLIENT_PLAYER_TYPE = 10
 const DIAG_DIR := "user://brotato_local_together"
 const DIAG_LOG_PATH := DIAG_DIR + "/diagnostics.log"
 
-var steam_connection
+var network_connection
 var brotatogether_options
 
 var is_multiplayer_lobby = false
@@ -32,8 +32,8 @@ func _enter_tree() -> void:
 
 
 func _ready():
-	steam_connection = get_node_or_null("/root/NetworkConnection")
-	if steam_connection == null:
+	network_connection = get_node_or_null("/root/NetworkConnection")
+	if network_connection == null:
 		_diag("ready abort: no /root/NetworkConnection")
 		return
 	_diag("ready start")
@@ -97,7 +97,7 @@ func _ready():
 		username_labels.push_back(username_label_player_4)
 		
 		_update_username_labels()
-		lobby_member_count_at_scene_init = steam_connection.lobby_members.size()
+		lobby_member_count_at_scene_init = network_connection.lobby_members.size()
 		_sync_coop_players_with_lobby()
 			
 		for character_data in _get_all_possible_elements(0):
@@ -159,15 +159,15 @@ func _exit_tree() -> void:
 
 
 func _connect_steam_signal(signal_name: String, method_name: String) -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
-	var _connect_error = SignalUtils.safe_connect(steam_connection, signal_name, self, method_name)
+	var _connect_error = SignalUtils.safe_connect(network_connection, signal_name, self, method_name)
 
 
 func _disconnect_steam_signal(signal_name: String, method_name: String) -> void:
-	if steam_connection == null:
+	if network_connection == null:
 		return
-	SignalUtils.safe_disconnect(steam_connection, signal_name, self, method_name)
+	SignalUtils.safe_disconnect(network_connection, signal_name, self, method_name)
 
 
 func _on_lobby_players_updated() -> void:
@@ -176,7 +176,7 @@ func _on_lobby_players_updated() -> void:
 	if not is_inside_tree():
 		return
 
-	var lobby_member_count = steam_connection.lobby_members.size()
+	var lobby_member_count = network_connection.lobby_members.size()
 	if lobby_member_count_at_scene_init < 0:
 		lobby_member_count_at_scene_init = lobby_member_count
 
@@ -194,9 +194,9 @@ func _sync_coop_players_with_lobby() -> void:
 	var local_added := false
 	var target_connected_players: Array = []
 
-	for member_index in range(steam_connection.lobby_members.size()):
-		var member_id = steam_connection.lobby_members[member_index]
-		if member_id == steam_connection.steam_id:
+	for member_index in range(network_connection.lobby_members.size()):
+		var member_id = network_connection.lobby_members[member_index]
+		if member_id == network_connection.steam_id:
 			target_connected_players.push_back([0, MULTIPLAYER_CLIENT_PLAYER_TYPE])
 			local_added = true
 			_diag("add_player member=%s device=0 local=true" % str(member_index))
@@ -232,8 +232,8 @@ func _connected_players_equal(current_players: Array, target_players: Array) -> 
 
 func _update_username_labels() -> void:
 	for index in username_labels.size():
-		if index < steam_connection.lobby_member_names.size():
-			username_labels[index].text = String(steam_connection.lobby_member_names[index])
+		if index < network_connection.lobby_member_names.size():
+			username_labels[index].text = String(network_connection.lobby_member_names[index])
 		else:
 			username_labels[index].text = ""
 
@@ -254,7 +254,7 @@ func _on_element_focused(element:InventoryElement, inventory_player_index:int, _
 		elif element.is_random:
 			element_string = "RANDOM"
 		if not external_focus:
-			steam_connection.character_focused(element_string)
+			network_connection.character_focused(element_string)
 		else:
 			external_focus = false
 
@@ -277,7 +277,7 @@ func _player_focused_character(player_index : int , character : String) -> void:
 		
 	_clear_selected_element(player_index)
 	_player_characters[player_index] = selected_item
-	if player_index < RunData.get_player_count() and player_index != steam_connection.get_my_index():
+	if player_index < RunData.get_player_count() and player_index != network_connection.get_my_index():
 		if focused_element != null:
 			if Utils.get_focus_emulator(player_index).focused_control != focused_element:
 				external_focus = true
@@ -320,7 +320,7 @@ func _lobby_characters_updated(player_characters : Array, has_player_selected : 
 			all_selected = false
 			_clear_selected_element(player_index)
 	
-	if all_selected and steam_connection.is_host():
+	if all_selected and network_connection.is_host():
 		_selections_completed_timer.start()
 
 
@@ -333,12 +333,12 @@ func _set_selected_element(player_index:int) -> void:
 	# В локальном лобби с одним участником (только host) базовая логика coop
 	# не завершает выбор автоматически. Для ручной проверки и solo-host
 	# режима продолжаем ран сразу.
-	if is_multiplayer_lobby and steam_connection.is_host() and steam_connection.lobby_members.size() <= 1:
+	if is_multiplayer_lobby and network_connection.is_host() and network_connection.lobby_members.size() <= 1:
 		_on_selections_completed()
 		return
 
-	if steam_connection.get_lobby_index_for_player(steam_connection.steam_id) == player_index:
-		steam_connection.character_selected()
+	if network_connection.get_lobby_index_for_player(network_connection.steam_id) == player_index:
+		network_connection.character_selected()
 
 
 func _character_lobby_update_requested() -> void:
@@ -350,12 +350,12 @@ func _character_lobby_update_requested() -> void:
 		else:
 			currently_focused_characters.push_back(character_item_to_string(selected_item))
 	
-	steam_connection.send_character_lobby_update(currently_focused_characters, _has_player_selected)
+	network_connection.send_character_lobby_update(currently_focused_characters, _has_player_selected)
 
 
 func _on_selections_completed() -> void:
 	if is_multiplayer_lobby:
-		if not steam_connection.is_host():
+		if not network_connection.is_host():
 			return
 	else:
 		._on_selections_completed()
@@ -378,7 +378,7 @@ func _on_selections_completed() -> void:
 		RunData.add_character(character, player_index)
 		currently_focused_characters.push_back(character_item_to_string(character))
 	
-	steam_connection.send_character_selection_completed(RunData.some_player_has_weapon_slots(), currently_focused_characters)
+	network_connection.send_character_selection_completed(RunData.some_player_has_weapon_slots(), currently_focused_characters)
 	if RunData.some_player_has_weapon_slots():
 		_request_host_scene_transition(MenuData.weapon_selection_scene)
 	else:
@@ -412,13 +412,13 @@ func _request_host_scene_transition(target_scene: String) -> void:
 	if not is_multiplayer_lobby:
 		_change_scene(normalized_target)
 		return
-	if steam_connection == null:
+	if network_connection == null:
 		_change_scene(normalized_target)
 		return
-	if not steam_connection.is_host():
+	if not network_connection.is_host():
 		return
-	if steam_connection.has_method("start_scene_transition"):
-		var started = bool(steam_connection.start_scene_transition(normalized_target))
+	if network_connection.has_method("start_scene_transition"):
+		var started = bool(network_connection.start_scene_transition(normalized_target))
 		if started:
 			return
 
