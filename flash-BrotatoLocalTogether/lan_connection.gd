@@ -1507,6 +1507,26 @@ func clear_recovery_snapshots() -> void:
 		session_registry.clear_active_session()
 
 
+func reset_saved_sessions() -> void:
+	leave_game_lobby()
+	clear_recovery_snapshots()
+	cached_state_snapshot.clear()
+	active_session.clear()
+	session_id = ""
+	host_instance_id = ""
+	local_player_token = ""
+	pending_restore_snapshot.clear()
+	pending_client_recovery_state.clear()
+
+	var options = _get_options()
+	if options != null:
+		options.clear_session_credentials()
+		options.set_last_join_endpoint("")
+
+	emit_signal("session_resume_failed", "reset_by_user", "Session data reset")
+	_push_system_message("Saved sessions cleared")
+
+
 func _build_snapshot_payload() -> Dictionary:
 	var options = _get_options()
 	var host_port = 24567

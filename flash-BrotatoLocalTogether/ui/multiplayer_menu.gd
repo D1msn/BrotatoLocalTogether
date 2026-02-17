@@ -14,6 +14,7 @@ var advertise_ip_input : LineEdit
 var join_endpoint_input : LineEdit
 var join_endpoint_button : Button
 var resume_snapshot_button : Button
+var reset_sessions_button : Button
 
 var shown_lobbies : Dictionary = {}
 
@@ -74,6 +75,12 @@ func _build_network_controls() -> void:
 	resume_snapshot_button.text = "Resume Snapshot"
 	resume_snapshot_button.connect("pressed", self, "_on_resume_snapshot_button_pressed")
 	controls_row.add_child(resume_snapshot_button)
+
+	reset_sessions_button = Button.new()
+	reset_sessions_button.name = "ResetSessionsButton"
+	reset_sessions_button.text = "Reset Sessions"
+	reset_sessions_button.connect("pressed", self, "_on_reset_sessions_button_pressed")
+	controls_row.add_child(reset_sessions_button)
 
 	refresh_lobbies_button.text = "Refresh Endpoints"
 	_update_resume_button_state()
@@ -168,6 +175,17 @@ func _on_resume_snapshot_button_pressed() -> void:
 	if not steam_connection.resume_from_latest_snapshot():
 		_append_system_message("Failed to restore snapshot")
 		_update_resume_button_state()
+
+
+func _on_reset_sessions_button_pressed() -> void:
+	if steam_connection == null:
+		return
+
+	steam_connection.reset_saved_sessions()
+	if join_endpoint_input != null:
+		join_endpoint_input.text = ""
+	_append_system_message("Session data reset. Start from clean state.")
+	_on_refresh_lobbies_button_pressed()
 
 
 func _on_refresh_lobbies_button_pressed() -> void:
