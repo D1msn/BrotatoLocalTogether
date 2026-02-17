@@ -48,7 +48,6 @@ var last_rejection_reason : String = ""
 var pending_restore_snapshot : Dictionary = {}
 var pending_client_recovery_state : Dictionary = {}
 var attempted_tokenless_retry : bool = false
-var outgoing_sequence : int = 0
 
 signal session_resume_available(session_id, expires_at_unix)
 signal session_resumed(session_id, player_slot)
@@ -865,37 +864,53 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 		"payload": {},
 	}
 	if not (decoded_payload is Dictionary):
+		result["ok"] = false
 		return result
 
 	var decoded_dict: Dictionary = decoded_payload
 
-	if decoded_dict.has(ENVELOPE_KEY_PAYLOAD) and decoded_dict.has(ENVELOPE_KEY_MESSAGE_TYPE):
-		var remote_protocol_version = int(decoded_dict.get(ENVELOPE_KEY_PROTOCOL_VERSION, 0))
-		var parsed_message_type = int(decoded_dict.get(ENVELOPE_KEY_MESSAGE_TYPE, fallback_message_type))
-		var remote_session_id = String(decoded_dict.get(ENVELOPE_KEY_SESSION_ID, "")).strip_edges()
-		var payload_data = decoded_dict.get(ENVELOPE_KEY_PAYLOAD, {})
+	if (
+		not decoded_dict.has(ENVELOPE_KEY_PROTOCOL_VERSION) or
+		not decoded_dict.has(ENVELOPE_KEY_MESSAGE_TYPE) or
+		not decoded_dict.has(ENVELOPE_KEY_SESSION_ID) or
+		not decoded_dict.has(ENVELOPE_KEY_SEQUENCE) or
+		not decoded_dict.has(ENVELOPE_KEY_TICK) or
+		not decoded_dict.has(ENVELOPE_KEY_SENT_AT_MSEC) or
+		not decoded_dict.has(ENVELOPE_KEY_PAYLOAD)
+	):
+		result["ok"] = false
+		return result
 
-		if remote_protocol_version != PROTOCOL_VERSION:
-			if parsed_message_type == SESSION_MESSAGE_REGISTER_CLIENT and is_host():
-				_send_register_reject(
-					sender_id,
-					"protocol_mismatch",
-					"Protocol mismatch: host=%d client=%d" % [PROTOCOL_VERSION, remote_protocol_version]
-				)
+	var remote_protocol_version = int(decoded_dict.get(ENVELOPE_KEY_PROTOCOL_VERSION, 0))
+	var parsed_message_type = int(decoded_dict.get(ENVELOPE_KEY_MESSAGE_TYPE, fallback_message_type))
+	var remote_session_id = String(decoded_dict.get(ENVELOPE_KEY_SESSION_ID, "")).strip_edges()
+	var payload_data = decoded_dict.get(ENVELOPE_KEY_PAYLOAD, {})
+
+	if parsed_message_type != fallback_message_type:
+		result["ok"] = false
+		return result
+
+	if remote_protocol_version != PROTOCOL_VERSION:
+		if parsed_message_type == SESSION_MESSAGE_REGISTER_CLIENT and is_host():
+			_send_register_reject(
+				sender_id,
+				"protocol_mismatch",
+				"Protocol mismatch: host=%d client=%d" % [PROTOCOL_VERSION, remote_protocol_version]
+			)
+		result["ok"] = false
+		return result
+
+	if _is_session_bound_message(parsed_message_type):
+		if not session_id.empty() and not remote_session_id.empty() and remote_session_id != session_id:
 			result["ok"] = false
 			return result
 
-		if _is_session_bound_message(parsed_message_type):
-			if not session_id.empty() and not remote_session_id.empty() and remote_session_id != session_id:
-				result["ok"] = false
-				return result
-
-		result["message_type"] = parsed_message_type
-		if payload_data is Dictionary:
-			result["payload"] = payload_data
+	if not (payload_data is Dictionary):
+		result["ok"] = false
 		return result
 
-	result["payload"] = decoded_dict
+	result["message_type"] = parsed_message_type
+	result["payload"] = payload_data
 	return result
 
 

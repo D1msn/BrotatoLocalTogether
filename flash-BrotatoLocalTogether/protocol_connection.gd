@@ -2,6 +2,15 @@ extends Node
 
 const GLOBAL_CHAT_TYPE := "BROTATOGETHER_GLOBAL_CHAT"
 const GAME_LOBBY_TYPE := "BROTATOGETHER_GAME_LOBBY"
+const P2P_PROTOCOL_VERSION := 1
+const P2P_ENVELOPE_MAX_SEQ := 2147483647
+const P2P_ENVELOPE_KEY_PROTOCOL_VERSION := "PROTOCOL_VERSION"
+const P2P_ENVELOPE_KEY_MESSAGE_TYPE := "MESSAGE_TYPE"
+const P2P_ENVELOPE_KEY_SESSION_ID := "SESSION_ID"
+const P2P_ENVELOPE_KEY_SEQUENCE := "SEQ"
+const P2P_ENVELOPE_KEY_TICK := "TICK"
+const P2P_ENVELOPE_KEY_SENT_AT_MSEC := "SENT_AT_MSEC"
+const P2P_ENVELOPE_KEY_PAYLOAD := "PAYLOAD"
 
 enum PlayerStatus {CONNECTING, LOBBYING, PLAYING, SELF}
 
@@ -122,6 +131,7 @@ var ping_timer : Timer
 # Random string to map ping requests
 var ping_key
 var ping_start_time_msec = -1
+var outgoing_sequence : int = 0
 
 # Received a global chat, should be connected to chat panels to display the new chat message.
 signal global_chat_received (username, message)
@@ -405,10 +415,13 @@ func send_p2p_packet(data : Dictionary, message_type : int, target_id = -1) -> v
 		
 		return
 		
+	var safe_payload : Dictionary = {}
+	if data != null:
+		safe_payload = data.duplicate(true)
+
+	var envelope = _build_envelope(safe_payload, message_type)
 	var packet_data: PoolByteArray = PoolByteArray()
-	# Compress the PoolByteArray we create from our dictionary  using the GZIP compression method
-	
-	var compressed_data: PoolByteArray = var2bytes(data).compress(File.COMPRESSION_GZIP)
+	var compressed_data: PoolByteArray = var2bytes(envelope).compress(File.COMPRESSION_GZIP)
 	packet_data.append_array(compressed_data)
 	
 #	print_debug("[", MessageType.keys()[message_type], "] sending packet size: ", compressed_data.size())
@@ -437,86 +450,177 @@ func read_p2p_packet() -> void:
 				continue
 			
 			var sender_id : int = packet["remote_steam_id"]
-			var data : Dictionary = bytes2var(packet["data"].decompress_dynamic(-1, File.COMPRESSION_GZIP))
-			
-			if channel == MessageType.MESSAGE_TYPE_PING:
-				_respond_to_ping(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_PONG:
-				_respond_to_pong(data)
-			elif channel == MessageType.MESSAGE_TYPE_LATENCY_REPORT:
-				_accept_latency_report(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_PLAYER_STATUS:
-				_receive_player_statuses(data)
-			elif channel == MessageType.MESSAGE_TYPE_CHARACTER_FOCUS:
-				_receive_character_focus(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_CHARACTER_SELECTED:
-				_receive_character_select(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_CHARACTER_LOBBY_UPDATE:
-				_receive_character_lobby_update(data)
-			elif channel == MessageType.MESSAGE_TYPE_WEAPON_FOCUS:
-				_receive_weapon_focus(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_WEAPON_SELECTED:
-				_receive_weapon_select(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_WEAPON_LOBBY_UPDATE:
-				_receive_weapon_lobby_update(data)
-			elif channel == MessageType.MESSAGE_TYPE_DIFFICULTY_FOCUSED:
-				_receive_difficutly_focus_update(data)
-			elif channel == MessageType.MESSAGE_TYPE_DIFFICULTY_PRESSED:
-				_receive_difficutly_pressed(data)
-			
-			# Shop channels
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_LOBBY_UPDATE:
-				_receive_shop_update(data)
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_WEAPON_DISCARD:
-				_receive_shop_weapon_discard(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_BUY_ITEM:
-				_receive_shop_buy_item(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_REROLL:
-				_receive_shop_reroll(sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_COMBINE_WEAPON:
-				_receive_shop_combine_weapon(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_ITEM_FOCUS:
-				_receive_shop_item_focus(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_GO_BUTTON_UPDATED:
-				_receive_shop_go_button_pressed(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_LOCK_ITEM:
-				_receive_shop_lock_item(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_UNLOCK_ITEM:
-				_receive_shop_unlock_item(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_CHARACTER_SELECTION_COMPLETED:
-				_receive_character_selection_completed(data)
-			elif channel == MessageType.MESSAGE_TYPE_WEAPON_SELECTION_COMPLETED:
-				_receive_weapon_selection_completed(data)
-			elif channel == MessageType.MESSAGE_TYPE_HOST_ROUND_START:
-				_receive_host_round_start()
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_INVENTORY_ITEM_FOCUS:
-				_receive_shop_focus_inventory_element(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_SHOP_CLOSE_POPUP:
-				_receive_shop_close_popup()
-			elif channel == MessageType.MESSAGE_TYPE_LEAVE_SHOP:
-				_receive_leave_shop()
-		
-			# Main scene channels
-			elif channel == MessageType.MESSAGE_TYPE_MAIN_STATE:
-				_receive_game_state(data)
-			elif channel == MessageType.MESSAGE_TYPE_CLIENT_POSITION:
-				_receive_client_position(data, sender_id)
-			
-			## Post-wave menu channels
-			elif channel == MessageType.MESSAGE_TYPE_CLIENT_FOCUS_MAIN_SCENE:
-				_receive_client_menu_focus(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_MAIN_SCENE_REROLL_BUTTON_PRESSED:
-				_receive_main_scene_client_reroll_button_pressed(sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_MAIN_SCENE_CHOOSE_UPGRADE_PRESSED:
-				_receive_main_scene_client_choose_upgrade_pressed(data, sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_MAIN_SCENE_TAKE_BUTTON_PRESSED:
-				_receive_main_scene_client_take_button_pressed(sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_MAIN_SCENE_DISCARD_BUTTON_PRESSED:
-				_receive_main_scene_client_discard_button_pressed(sender_id)
-			elif channel == MessageType.MESSAGE_TYPE_HOST_ENTERED_SHOP:
-				_receive_host_entered_shop()
+			var decoded_payload = bytes2var(packet["data"].decompress_dynamic(-1, File.COMPRESSION_GZIP))
+			var parsed_packet = _parse_received_packet(channel, decoded_payload, sender_id)
+			if not bool(parsed_packet.get("ok", false)):
+				packet_size = Steam.getAvailableP2PPacketSize(channel)
+				continue
+
+			var resolved_channel : int = int(parsed_packet.get("message_type", channel))
+			var data : Dictionary = parsed_packet.get("payload", {})
+			_dispatch_incoming_packet(resolved_channel, data, sender_id)
 			
 			packet_size = Steam.getAvailableP2PPacketSize(channel)
+
+
+func _next_outgoing_sequence() -> int:
+	outgoing_sequence += 1
+	if outgoing_sequence >= P2P_ENVELOPE_MAX_SEQ:
+		outgoing_sequence = 1
+	return outgoing_sequence
+
+
+func _envelope_session_id() -> String:
+	if game_lobby_id == -1:
+		return ""
+	return str(game_lobby_id)
+
+
+func _build_envelope(payload: Dictionary, message_type: int) -> Dictionary:
+	return {
+		P2P_ENVELOPE_KEY_PROTOCOL_VERSION: P2P_PROTOCOL_VERSION,
+		P2P_ENVELOPE_KEY_MESSAGE_TYPE: message_type,
+		P2P_ENVELOPE_KEY_SESSION_ID: _envelope_session_id(),
+		P2P_ENVELOPE_KEY_SEQUENCE: _next_outgoing_sequence(),
+		P2P_ENVELOPE_KEY_TICK: Engine.get_physics_frames(),
+		P2P_ENVELOPE_KEY_SENT_AT_MSEC: Time.get_ticks_msec(),
+		P2P_ENVELOPE_KEY_PAYLOAD: payload,
+	}
+
+
+func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_id: int) -> Dictionary:
+	var result = {
+		"ok": true,
+		"message_type": fallback_message_type,
+		"payload": {},
+	}
+
+	if not (decoded_payload is Dictionary):
+		result["ok"] = false
+		print("WARNING - received non-dictionary packet from peer ", sender_id)
+		return result
+
+	var decoded_dict: Dictionary = decoded_payload
+	if (
+		not decoded_dict.has(P2P_ENVELOPE_KEY_PROTOCOL_VERSION) or
+		not decoded_dict.has(P2P_ENVELOPE_KEY_MESSAGE_TYPE) or
+		not decoded_dict.has(P2P_ENVELOPE_KEY_SESSION_ID) or
+		not decoded_dict.has(P2P_ENVELOPE_KEY_SEQUENCE) or
+		not decoded_dict.has(P2P_ENVELOPE_KEY_TICK) or
+		not decoded_dict.has(P2P_ENVELOPE_KEY_SENT_AT_MSEC) or
+		not decoded_dict.has(P2P_ENVELOPE_KEY_PAYLOAD)
+	):
+		result["ok"] = false
+		print("WARNING - received packet without envelope from peer ", sender_id)
+		return result
+
+	var parsed_message_type = int(decoded_dict.get(P2P_ENVELOPE_KEY_MESSAGE_TYPE, fallback_message_type))
+	if parsed_message_type != fallback_message_type:
+		result["ok"] = false
+		print("WARNING - message type mismatch from peer ", sender_id, ". channel=", fallback_message_type, ", envelope=", parsed_message_type)
+		return result
+
+	var remote_protocol_version = int(decoded_dict.get(P2P_ENVELOPE_KEY_PROTOCOL_VERSION, 0))
+	if remote_protocol_version != P2P_PROTOCOL_VERSION:
+		result["ok"] = false
+		print("WARNING - protocol mismatch from peer ", sender_id, ". local=", P2P_PROTOCOL_VERSION, ", remote=", remote_protocol_version)
+		return result
+
+	var remote_session_id = String(decoded_dict.get(P2P_ENVELOPE_KEY_SESSION_ID, "")).strip_edges()
+	var local_session_id = _envelope_session_id()
+	if not local_session_id.empty() and not remote_session_id.empty() and remote_session_id != local_session_id:
+		result["ok"] = false
+		print("WARNING - lobby/session mismatch from peer ", sender_id, ". local=", local_session_id, ", remote=", remote_session_id)
+		return result
+
+	var payload_data = decoded_dict.get(P2P_ENVELOPE_KEY_PAYLOAD, {})
+	if not (payload_data is Dictionary):
+		result["ok"] = false
+		print("WARNING - envelope payload is not a dictionary from peer ", sender_id)
+		return result
+
+	result["message_type"] = parsed_message_type
+	result["payload"] = payload_data
+	return result
+
+
+func _dispatch_incoming_packet(channel : int, data : Dictionary, sender_id : int) -> void:
+	if channel == MessageType.MESSAGE_TYPE_PING:
+		_respond_to_ping(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_PONG:
+		_respond_to_pong(data)
+	elif channel == MessageType.MESSAGE_TYPE_LATENCY_REPORT:
+		_accept_latency_report(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_PLAYER_STATUS:
+		_receive_player_statuses(data)
+	elif channel == MessageType.MESSAGE_TYPE_CHARACTER_FOCUS:
+		_receive_character_focus(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_CHARACTER_SELECTED:
+		_receive_character_select(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_CHARACTER_LOBBY_UPDATE:
+		_receive_character_lobby_update(data)
+	elif channel == MessageType.MESSAGE_TYPE_WEAPON_FOCUS:
+		_receive_weapon_focus(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_WEAPON_SELECTED:
+		_receive_weapon_select(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_WEAPON_LOBBY_UPDATE:
+		_receive_weapon_lobby_update(data)
+	elif channel == MessageType.MESSAGE_TYPE_DIFFICULTY_FOCUSED:
+		_receive_difficutly_focus_update(data)
+	elif channel == MessageType.MESSAGE_TYPE_DIFFICULTY_PRESSED:
+		_receive_difficutly_pressed(data)
+
+	# Shop channels
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_LOBBY_UPDATE:
+		_receive_shop_update(data)
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_WEAPON_DISCARD:
+		_receive_shop_weapon_discard(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_BUY_ITEM:
+		_receive_shop_buy_item(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_REROLL:
+		_receive_shop_reroll(sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_COMBINE_WEAPON:
+		_receive_shop_combine_weapon(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_ITEM_FOCUS:
+		_receive_shop_item_focus(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_GO_BUTTON_UPDATED:
+		_receive_shop_go_button_pressed(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_LOCK_ITEM:
+		_receive_shop_lock_item(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_UNLOCK_ITEM:
+		_receive_shop_unlock_item(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_CHARACTER_SELECTION_COMPLETED:
+		_receive_character_selection_completed(data)
+	elif channel == MessageType.MESSAGE_TYPE_WEAPON_SELECTION_COMPLETED:
+		_receive_weapon_selection_completed(data)
+	elif channel == MessageType.MESSAGE_TYPE_HOST_ROUND_START:
+		_receive_host_round_start()
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_INVENTORY_ITEM_FOCUS:
+		_receive_shop_focus_inventory_element(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_SHOP_CLOSE_POPUP:
+		_receive_shop_close_popup()
+	elif channel == MessageType.MESSAGE_TYPE_LEAVE_SHOP:
+		_receive_leave_shop()
+
+	# Main scene channels
+	elif channel == MessageType.MESSAGE_TYPE_MAIN_STATE:
+		_receive_game_state(data)
+	elif channel == MessageType.MESSAGE_TYPE_CLIENT_POSITION:
+		_receive_client_position(data, sender_id)
+
+	# Post-wave menu channels
+	elif channel == MessageType.MESSAGE_TYPE_CLIENT_FOCUS_MAIN_SCENE:
+		_receive_client_menu_focus(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_MAIN_SCENE_REROLL_BUTTON_PRESSED:
+		_receive_main_scene_client_reroll_button_pressed(sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_MAIN_SCENE_CHOOSE_UPGRADE_PRESSED:
+		_receive_main_scene_client_choose_upgrade_pressed(data, sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_MAIN_SCENE_TAKE_BUTTON_PRESSED:
+		_receive_main_scene_client_take_button_pressed(sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_MAIN_SCENE_DISCARD_BUTTON_PRESSED:
+		_receive_main_scene_client_discard_button_pressed(sender_id)
+	elif channel == MessageType.MESSAGE_TYPE_HOST_ENTERED_SHOP:
+		_receive_host_entered_shop()
 
 
 func _generate_ping_key() -> String:
