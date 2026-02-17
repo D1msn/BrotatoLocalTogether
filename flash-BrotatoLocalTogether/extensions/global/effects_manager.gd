@@ -6,6 +6,18 @@ var in_multiplayer_game = false
 var is_host = false
 
 
+func _request_immediate_vfx_flush() -> void:
+	if not in_multiplayer_game or not is_host:
+		return
+	if not is_inside_tree():
+		return
+	var tree = get_tree()
+	if tree == null or tree.current_scene == null:
+		return
+	if tree.current_scene.has_method("request_immediate_network_flush"):
+		tree.current_scene.call_deferred("request_immediate_network_flush")
+
+
 func _ready():
 	steam_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
@@ -26,6 +38,7 @@ func play_hit_particles(effect_pos: Vector2, direction: Vector2, effect_scale: f
 		hit_particle_dict["Y_DIR"] = direction.y
 		hit_particle_dict["SCALE"] = effect_scale
 		brotatogether_options.batched_hit_particles.push_back(hit_particle_dict)
+		_request_immediate_vfx_flush()
 
 
 func play_hit_effect(effect_pos: Vector2, _direction: Vector2, effect_scale: float)->void :
@@ -37,3 +50,4 @@ func play_hit_effect(effect_pos: Vector2, _direction: Vector2, effect_scale: flo
 		hit_effect_dict["Y_POS"] = effect_pos.y
 		hit_effect_dict["SCALE"] = effect_scale
 		brotatogether_options.batched_hit_effects.push_back(hit_effect_dict)
+		_request_immediate_vfx_flush()

@@ -274,6 +274,14 @@ func _physics_process(delta : float):
 			_send_client_position()
 
 
+func request_immediate_network_flush() -> void:
+	if not in_multiplayer_game:
+		return
+	if steam_connection == null or not steam_connection.is_host():
+		return
+	send_timer = 0.0
+
+
 func _process(_delta):
 	if not in_multiplayer_game:
 		return
