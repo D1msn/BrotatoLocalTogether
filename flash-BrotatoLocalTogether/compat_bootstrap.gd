@@ -81,6 +81,15 @@ func add_forced_disabled_paths(paths: Array) -> void:
 		disabled_extension_paths.push_back(normalized_path)
 
 
+func remove_disabled_paths(paths: Array) -> void:
+	for path in paths:
+		var normalized_path := String(path).strip_edges()
+		if normalized_path.empty():
+			continue
+		if disabled_extension_paths.has(normalized_path):
+			disabled_extension_paths.erase(normalized_path)
+
+
 func is_group_enabled(group_id: String) -> bool:
 	if disabled_extension_groups.has(group_id):
 		return false

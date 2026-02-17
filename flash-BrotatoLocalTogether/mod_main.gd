@@ -84,6 +84,7 @@ func _ensure_root_node(node_name: String, script_resource) -> void:
 func _initialize_safe_bootstrap() -> void:
 	compat_bootstrap = CompatBootstrap.new()
 	compat_bootstrap.load_config(ExtensionRegistry.get_default_enabled_groups())
+	compat_bootstrap.remove_disabled_paths(ExtensionRegistry.get_forced_reenabled_extension_paths(ext_dir))
 	compat_bootstrap.add_forced_disabled_paths(ExtensionRegistry.get_forced_disabled_extension_paths(ext_dir))
 	_append_bootstrap_trace(
 		"safe_bootstrap config loaded: enabled=%s rollout=%s"
