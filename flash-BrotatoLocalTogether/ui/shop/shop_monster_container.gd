@@ -53,6 +53,6 @@ func add_player_count(username:String, count: int) -> void:
 func clear_player_counts() -> void:
 	var purchase_tracker = get_node("PurchaseTracker")
 	for child in purchase_tracker.get_children():
-		purchase_tracker.remove_child(child)
+		child.queue_free()
 
 

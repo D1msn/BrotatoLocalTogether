@@ -74,6 +74,7 @@ func _ready():
 		var run_options_icon = run_options_top_panel.get_node_or_null("Icon")
 		if run_options_icon != null:
 			run_options_top_panel.remove_child(run_options_icon)
+			run_options_icon.queue_free()
 		
 		var username_label_player_1 : Label = UsernameLabel.instance()
 		$"MarginContainer/VBoxContainer/DescriptionContainer/HBoxContainer/Panel1/vboxContainer".add_child(username_label_player_1)

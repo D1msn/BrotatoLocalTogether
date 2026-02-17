@@ -13,6 +13,7 @@ func init(tracked_players:Dictionary) -> void:
 		health_bar_map[tracked_player_id] = health_bar
 		
 	remove_child(life_bar)
+	life_bar.queue_free()
 	update_health_bars(tracked_players)
 	
 func update_health_bars(tracked_players:Dictionary) -> void:

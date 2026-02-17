@@ -175,7 +175,6 @@ func _ready()->void :
 	var _error_discard_button = _item_box_ui.connect("item_discard_button_pressed", self, "on_item_box_discard_button_pressed")
 	
 	game_controller.send_client_started()
-	game_controller.send_client_started()
 	for player_id in game_controller.tracked_players:
 		game_controller.tracked_players[player_id].erase("player")
 
@@ -333,12 +332,15 @@ func clean_up_room(is_last_wave:bool = false, is_run_lost:bool = false, is_run_w
 		if entity.has_node("MovementBehavior"):
 			var movemenent_node = entity.get_node("MovementBehavior")
 			entity.remove_child(movemenent_node)
+			movemenent_node.queue_free()
 			
 			movemenent_node = ClientMovementBehavior.new()
 			movemenent_node.set_name("MovementBehavior")
 			entity.add_child(movemenent_node)
 		
 		_entities_container.remove_child(entity)
+		if entity != _player:
+			entity.queue_free()
 
 	health_tracker.hide()
 	_wave_cleared_label.hide()
@@ -349,6 +351,7 @@ func clean_up_room(is_last_wave:bool = false, is_run_lost:bool = false, is_run_w
 	if is_instance_valid(_player):
 		var movemenent_node = _player.get_node("MovementBehavior")
 		_player.remove_child(movemenent_node)
+		movemenent_node.queue_free()
 		
 		_player.clean_up()
 	

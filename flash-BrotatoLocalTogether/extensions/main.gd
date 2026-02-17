@@ -2,6 +2,7 @@ extends "res://main.gd"
 
 var ClientMovementBehavior = load("res://mods-unpacked/flash-BrotatoLocalTogether/client/client_movement_behavior.gd")
 var ClientAttackBehavior = load("res://mods-unpacked/flash-BrotatoLocalTogether/client/client_attack_behavior.gd")
+var InterpolationBuffer = load("res://mods-unpacked/flash-BrotatoLocalTogether/client/interpolation_buffer.gd")
 var explosion_scene = load("res://projectiles/explosion.tscn")
 var DataNode = load("res://mods-unpacked/flash-BrotatoLocalTogether/data_node.gd")
 
@@ -20,6 +21,8 @@ var send_timer = SEND_RATE
 var my_player_index
 
 var client_players = {}
+var client_player_position_buffers = {}
+var client_player_latest_payloads = {}
 var client_enemies = {}
 var client_births = {}
 var client_player_projectiles = {}
@@ -95,6 +98,8 @@ enum ProjectileState {
 func _ready():
 	_reset_core_trace()
 	_append_core_trace("_ready start")
+	client_player_position_buffers.clear()
+	client_player_latest_payloads.clear()
 	steam_connection = get_node_or_null("/root/NetworkConnection")
 	if steam_connection == null:
 		_core_warn("Не найден /root/NetworkConnection, core-main отключен для текущей сцены.")
@@ -146,6 +151,8 @@ func _ready():
 func _exit_tree() -> void:
 	in_multiplayer_game = false
 	waiting_to_start_round = false
+	client_player_position_buffers.clear()
+	client_player_latest_payloads.clear()
 	if steam_connection != null:
 		_disconnect_network_signal("client_status_received", "_client_status_received")
 		_disconnect_network_signal("host_starts_round", "_host_starts_round")
@@ -274,20 +281,60 @@ func _physics_process(delta : float):
 			_send_client_position()
 
 
+func _get_player_interpolation_buffer(player_index: int):
+	if client_player_position_buffers.has(player_index):
+		return client_player_position_buffers[player_index]
+
+	var interpolation_buffer = InterpolationBuffer.new()
+	client_player_position_buffers[player_index] = interpolation_buffer
+	return interpolation_buffer
+
+
+func _apply_interpolated_remote_positions() -> void:
+	for player_index_key in client_player_latest_payloads.keys():
+		var player_index = int(player_index_key)
+		if player_index < 0 or player_index >= _players.size():
+			continue
+		if player_index == my_player_index:
+			continue
+
+		var player = _players[player_index]
+		if player == null or not is_instance_valid(player) or player.dead:
+			continue
+
+		if not client_player_position_buffers.has(player_index):
+			continue
+		var interpolation_buffer = client_player_position_buffers[player_index]
+		var smoothed_position: Vector2 = interpolation_buffer.get_pos()
+
+		var latest_payload = client_player_latest_payloads[player_index]
+		if not (latest_payload is Dictionary):
+			continue
+
+		var interpolated_payload = latest_payload.duplicate(true)
+		interpolated_payload[EntityState.ENTITY_STATE_X_POS] = smoothed_position.x
+		interpolated_payload[EntityState.ENTITY_STATE_Y_POS] = smoothed_position.y
+		player.update_external_player_position(interpolated_payload)
+
+
 func _process(_delta):
-	if in_multiplayer_game:
-		if waiting_to_start_round:
-			if steam_connection.is_host():
-				var all_players_entered = true
-				for player_index in RunData.get_player_count():
-					if not player_in_scene[player_index]:
-						all_players_entered = false
-						break
-				if all_players_entered:
-					waiting_to_start_round = false
-					_wave_timer.start()
-					_wave_timer.paused = false
-					steam_connection.send_round_start()
+	if not in_multiplayer_game:
+		return
+
+	_apply_interpolated_remote_positions()
+
+	if waiting_to_start_round:
+		if steam_connection.is_host():
+			var all_players_entered = true
+			for player_index in RunData.get_player_count():
+				if not player_in_scene[player_index]:
+					all_players_entered = false
+					break
+			if all_players_entered:
+				waiting_to_start_round = false
+				_wave_timer.start()
+				_wave_timer.paused = false
+				steam_connection.send_round_start()
 
 
 func _send_game_state() -> void:
@@ -770,7 +817,28 @@ func _update_player_position(player_dict : Dictionary, player_index : int) -> vo
 	if player_index != my_player_index:
 		if player.dead:
 			return
-		player.call_deferred("update_external_player_position", player_dict)
+		if not (
+			player_dict.has(EntityState.ENTITY_STATE_X_POS) and
+			player_dict.has(EntityState.ENTITY_STATE_Y_POS)
+		):
+			_core_warn_once(
+				"update_player_position_missing_coords_%s" % str(player_index),
+				"Пропущено обновление позиции: отсутствуют координаты X/Y для player_index=%s." % str(player_index)
+			)
+			return
+
+		var interpolation_buffer = _get_player_interpolation_buffer(player_index)
+		var snapshot_position = Vector2(
+			float(player_dict[EntityState.ENTITY_STATE_X_POS]),
+			float(player_dict[EntityState.ENTITY_STATE_Y_POS])
+		)
+		var is_first_payload_for_player = not client_player_latest_payloads.has(player_index)
+		interpolation_buffer.add_snapshot(snapshot_position)
+		client_player_latest_payloads[player_index] = player_dict.duplicate(true)
+
+		# Первый пакет применяем сразу, чтобы игрок не "залипал" до заполнения буфера.
+		if is_first_payload_for_player:
+			player.call_deferred("update_external_player_position", player_dict)
 	
 	if not steam_connection.is_host():
 		_players_ui[player_index].call_deferred("update_level_label")
@@ -849,6 +917,7 @@ func spawn_enemy(enemy_dict) -> void:
 	var movement_behavior = enemy.get_node_or_null("MovementBehavior")
 	if movement_behavior != null:
 		enemy.remove_child(movement_behavior)
+		movement_behavior.queue_free()
 		var client_movement_behavior = ClientMovementBehavior.new()
 		client_movement_behavior.set_name("MovementBehavior")
 		enemy.add_child(client_movement_behavior, true)
@@ -862,6 +931,7 @@ func spawn_enemy(enemy_dict) -> void:
 	var attack_behavior = enemy.get_node_or_null("AttackBehavior")
 	if attack_behavior != null:
 		enemy.remove_child(attack_behavior)
+		attack_behavior.queue_free()
 		var client_attack_behavior = ClientAttackBehavior.new()
 		client_attack_behavior.set_name("AttackBehavior")
 		enemy.add_child(client_attack_behavior, true)
