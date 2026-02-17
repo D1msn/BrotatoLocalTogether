@@ -34,10 +34,13 @@ static func get_forced_disabled_groups() -> Array:
 
 
 static func get_forced_disabled_extension_paths(ext_dir: String) -> Array:
+	# turret extension на части сборок 1.1.14.1 вызывает hard-crash
+	# до появления обычных логов; держим отключенным до отдельной адаптации.
 	# FocusEmulator extension также конфликтует с текущей версией игры:
 	# появляются дубли сигналов и ошибки работы вне tree.
-	# Отключаем только его, turret включён для проверки.
+	# Отключаем оба path.
 	return [
+		ext_dir + "entities/structures/turret/turret.gd",
 		ext_dir + "ui/menus/global/focus_emulator.gd",
 	]
 

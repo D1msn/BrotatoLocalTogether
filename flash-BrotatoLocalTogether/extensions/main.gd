@@ -37,14 +37,18 @@ var server_enemy_projectile_ids = {}
 
 const ENTITY_BIRTH_SCENE = preload("res://entities/birth/entity_birth.tscn")
 const TREE_SCENE = preload("res://entities/units/neutral/tree.tscn")
-const CLIENT_TURRET_STATS = preload("res://entities/structures/turret/turret_stats.tres")
+const CLIENT_TURRET_STATS_PATH := "res://entities/structures/turret/turret_stats.tres"
 
 const ENABLE_DEBUG = true
 const CORE_LOG_NAME := "BrotatoLocalTogether:CoreMain"
+const CORE_TRACE_DIR := "brotato_local_together"
+const CORE_TRACE_PATH := "user://brotato_local_together/core_trace.log"
 
 var debug_frame_counter : int = 0
 var safe_core_mode : bool = true
 var warning_once_map : Dictionary = {}
+var client_turret_stats = null
+var _last_physics_trace_msec : int = -1
 
 # This is currently a half-completed attempt ot shrink some of the overhead
 # in messaging.  With a bit of testing, the gains weren't that great given 
@@ -89,9 +93,12 @@ enum ProjectileState {
 
 
 func _ready():
+	_reset_core_trace()
+	_append_core_trace("_ready start")
 	steam_connection = get_node_or_null("/root/NetworkConnection")
 	if steam_connection == null:
 		_core_warn("Не найден /root/NetworkConnection, core-main отключен для текущей сцены.")
+		_append_core_trace("_ready abort: no /root/NetworkConnection")
 		return
 
 	brotatogether_options = get_node_or_null("/root/BrotogetherOptions")
@@ -99,9 +106,14 @@ func _ready():
 		_core_warn("Не найден /root/BrotogetherOptions, используем значения по умолчанию.")
 		in_multiplayer_game = false
 		safe_core_mode = true
+		_append_core_trace("_ready: no options node, defaults used")
 	else:
 		in_multiplayer_game = bool(brotatogether_options.in_multiplayer_game)
 		safe_core_mode = bool(brotatogether_options.core_safe_mode)
+		_append_core_trace(
+			"_ready options: in_multiplayer_game=%s safe_core_mode=%s"
+			% [str(in_multiplayer_game), str(safe_core_mode)]
+		)
 	
 	if in_multiplayer_game:
 		_connect_network_signal("client_status_received", "_client_status_received")
@@ -119,8 +131,16 @@ func _ready():
 		
 		my_player_index = steam_connection.get_my_index()
 		_core_info("core-main активен, safe_core_mode=%s, is_host=%s" % [str(safe_core_mode), str(steam_connection.is_host())])
+		_append_core_trace(
+			"_ready multiplayer: is_host=%s my_player_index=%s"
+			% [str(steam_connection.is_host()), str(my_player_index)]
+		)
 		
 		call_deferred("multiplayer_ready")
+	else:
+		_append_core_trace("_ready: multiplayer disabled")
+
+	_append_core_trace("_ready end")
 
 
 func _connect_network_signal(signal_name: String, method_name: String) -> void:
@@ -131,6 +151,9 @@ func _connect_network_signal(signal_name: String, method_name: String) -> void:
 	var connect_result = steam_connection.connect(signal_name, self, method_name)
 	if connect_result != OK:
 		_core_warn("Не удалось подключить сигнал %s -> %s (код %s)." % [signal_name, method_name, str(connect_result)])
+		_append_core_trace("signal connect failed: %s -> %s (%s)" % [signal_name, method_name, str(connect_result)])
+	else:
+		_append_core_trace("signal connected: %s -> %s" % [signal_name, method_name])
 
 
 func _core_info(message: String) -> void:
@@ -166,9 +189,55 @@ func _state_dict(state_dict: Dictionary, key: String) -> Dictionary:
 	return {}
 
 
+func _get_client_turret_stats():
+	if client_turret_stats != null:
+		return client_turret_stats
+
+	if not ResourceLoader.exists(CLIENT_TURRET_STATS_PATH):
+		_core_warn_once("missing_turret_stats", "Не найден ресурс %s." % CLIENT_TURRET_STATS_PATH)
+		return null
+
+	client_turret_stats = load(CLIENT_TURRET_STATS_PATH)
+	if client_turret_stats == null:
+		_core_warn_once("load_turret_stats_failed", "Не удалось загрузить %s." % CLIENT_TURRET_STATS_PATH)
+
+	return client_turret_stats
+
+
+func _reset_core_trace() -> void:
+	var directory := Directory.new()
+	if directory.open("user://") != OK:
+		return
+	if not directory.dir_exists(CORE_TRACE_DIR):
+		var _make_dir_result = directory.make_dir(CORE_TRACE_DIR)
+
+	var file := File.new()
+	if file.open(CORE_TRACE_PATH, File.WRITE) != OK:
+		return
+	file.store_line("=== BrotatoLocalTogether core trace ===")
+	file.store_line(str(OS.get_datetime()))
+	file.close()
+
+
+func _append_core_trace(message: String) -> void:
+	var file := File.new()
+	if file.open(CORE_TRACE_PATH, File.READ_WRITE) != OK:
+		return
+	file.seek_end()
+	file.store_line("[%s] %s" % [str(Time.get_ticks_msec()), message])
+	file.close()
+
+
 func _physics_process(delta : float):
 	if not in_multiplayer_game:
 		return
+	var now_msec = Time.get_ticks_msec()
+	if _last_physics_trace_msec < 0 or now_msec - _last_physics_trace_msec > 3000:
+		_last_physics_trace_msec = now_msec
+		_append_core_trace(
+			"_physics_process tick: host=%s send_timer=%.4f"
+			% [str(steam_connection != null and steam_connection.is_host()), send_timer]
+		)
 	
 	send_timer -= delta
 	if send_timer <= 0.0:
@@ -198,11 +267,14 @@ func _process(_delta):
 func _send_game_state() -> void:
 	if steam_connection == null:
 		_core_warn_once("send_state_no_connection", "Пропущена отправка state: нет подключения.")
+		_append_core_trace("_send_game_state skipped: no connection")
 		return
 
 	if brotatogether_options == null:
 		_core_warn_once("send_state_no_options", "Пропущена отправка state: нет BrotogetherOptions.")
+		_append_core_trace("_send_game_state skipped: no options")
 		return
+	_append_core_trace("_send_game_state start")
 
 	var state_dict = {}
 	
@@ -304,12 +376,23 @@ func _send_game_state() -> void:
 					size_by_key[key] = compressed_size
 	
 	steam_connection.send_game_state(state_dict)
+	_append_core_trace(
+		"_send_game_state done: players=%s enemies=%s bosses=%s safe_core_mode=%s"
+		% [
+			str(_state_array(state_dict, "PLAYERS").size()),
+			str(_state_array(state_dict, "ENEMIES").size()),
+			str(_state_array(state_dict, "BOSSES").size()),
+			str(safe_core_mode),
+		]
+	)
 
 
 func _state_update(state_dict : Dictionary) -> void:	
 	if not (state_dict is Dictionary):
 		_core_warn_once("state_not_dictionary", "Получен state не-словарь, пакет пропущен.")
+		_append_core_trace("_state_update skipped: payload not dictionary")
 		return
+	_append_core_trace("_state_update start")
 
 	var start_time : int = Time.get_ticks_usec()
 	var before : int
@@ -338,6 +421,10 @@ func _state_update(state_dict : Dictionary) -> void:
 	var player_update_time = Time.get_ticks_usec() - before
 
 	if safe_core_mode:
+		_append_core_trace(
+			"_state_update safe done: players=%s"
+			% str(players_array.size())
+		)
 		if ENABLE_DEBUG:
 			var safe_end_time : int = Time.get_ticks_usec()
 			var safe_elapsed_time = safe_end_time - start_time
@@ -484,6 +571,10 @@ func _state_update(state_dict : Dictionary) -> void:
 				" --- Sound: ", sound_update_time,
 				" --- Sounds 2d: ", sound_2d_update_time,
 				" --- Menus: ", menu_update_time)
+	_append_core_trace(
+		"_state_update full done: players=%s enemies=%s bosses=%s"
+		% [str(players_array.size()), str(enemies_array.size()), str(bosses_array.size())]
+	)
 
 
 func _input(event) -> void: 
@@ -505,6 +596,7 @@ func _send_client_position() -> void:
 			"send_client_position_bad_index",
 			"Пропущена отправка client_position: некорректный my_player_index=%s." % str(my_player_index)
 		)
+		_append_core_trace("_send_client_position skipped: invalid my_player_index=%s" % str(my_player_index))
 		return
 
 	var in_postwave_menu = _coop_upgrades_ui.visible
@@ -518,6 +610,7 @@ func _send_client_position() -> void:
 		)
 	else:
 		steam_connection.send_client_position(_dictionary_for_player(_players[my_player_index], my_player_index))
+	_append_core_trace("_send_client_position done: index=%s postwave=%s" % [str(my_player_index), str(in_postwave_menu)])
 
 
 func _dictionary_for_player(player, player_index) -> Dictionary:
@@ -569,12 +662,15 @@ func _update_player_position(player_dict : Dictionary, player_index : int) -> vo
 			"Пропущено обновление позиции: player_index=%s вне диапазона _players.size=%s."
 			% [str(player_index), str(_players.size())]
 		)
+		_append_core_trace("_update_player_position skipped: index out of range %s" % str(player_index))
 		return
 	if not (player_dict is Dictionary):
 		_core_warn_once("update_player_position_payload_type", "Пропущено обновление позиции: payload не словарь.")
+		_append_core_trace("_update_player_position skipped: payload type")
 		return
 	if not player_dict.has(EntityState.ENTITY_STATE_NETWORK_ID):
 		_core_warn_once("update_player_position_no_network_id", "Пропущено обновление позиции: отсутствует NETWORK_ID.")
+		_append_core_trace("_update_player_position skipped: no network id")
 		return
 
 	var player = _players[player_index]
@@ -662,6 +758,7 @@ func spawn_enemy(enemy_dict) -> void:
 func multiplayer_ready():
 	_wave_timer.stop()
 	waiting_to_start_round = true
+	_append_core_trace("multiplayer_ready: wave timer stopped")
 
 	if not steam_connection.is_host():
 		if steam_connection.has_method("consume_pending_runtime_recovery_state"):
@@ -669,6 +766,7 @@ func multiplayer_ready():
 			if recovery_state is Dictionary and recovery_state.size() > 0:
 				waiting_to_start_round = false
 				_state_update(recovery_state)
+				_append_core_trace("multiplayer_ready: consumed runtime recovery state")
 
 
 func _client_status_received(client_data : Dictionary, player_index : int) -> void:
@@ -1023,7 +1121,11 @@ func _spawn_structure(structure_dict : Dictionary) -> void:
 	structure.position.x = structure_dict["X_POS"]
 	structure.position.y = structure_dict["Y_POS"]
 	
-	structure.stats = CLIENT_TURRET_STATS
+	var turret_stats = _get_client_turret_stats()
+	if turret_stats != null:
+		structure.stats = turret_stats
+	else:
+		_core_warn_once("spawn_structure_no_stats", "Пропущено присвоение turret_stats для структуры.")
 	
 	client_structures[structure_dict["NETWORK_ID"]] = structure
 	

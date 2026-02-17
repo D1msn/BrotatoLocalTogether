@@ -2,7 +2,7 @@
 	"id": "BrotatoLocalTogether",
 	"name": "BrotatoLocalTogether",
 	"namespace": "flash",
-	"version_number": "0.0.7",
+	"version_number": "0.0.12",
 	"description": "LAN/Tailscale coop for Brotato without Steam lobbies.",
 	"website_url": "",
 	"dependencies": [],
