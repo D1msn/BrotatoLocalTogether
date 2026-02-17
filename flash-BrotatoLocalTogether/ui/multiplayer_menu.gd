@@ -44,15 +44,15 @@ func _ready() -> void:
 
 
 func _build_network_controls() -> void:
-	primary_controls_row.custom_constants/separation = 10
-	controls_root.custom_constants/separation = 14
+	primary_controls_row.add_constant_override("separation", 10)
+	controls_root.add_constant_override("separation", 14)
 	create_lobby_button.text = "Create Lobby"
 	refresh_lobbies_button.text = "Refresh Endpoints"
 	refresh_lobbies_button.rect_min_size = Vector2(260, 0)
 
 	host_controls_row = HBoxContainer.new()
 	host_controls_row.name = "HostControlsRow"
-	host_controls_row.custom_constants/separation = 10
+	host_controls_row.add_constant_override("separation", 10)
 	_insert_row_before_scroll(host_controls_row)
 
 	var host_label = _make_section_label("Host")
@@ -76,7 +76,7 @@ func _build_network_controls() -> void:
 
 	join_controls_row = HBoxContainer.new()
 	join_controls_row.name = "JoinControlsRow"
-	join_controls_row.custom_constants/separation = 10
+	join_controls_row.add_constant_override("separation", 10)
 	_insert_row_before_scroll(join_controls_row)
 
 	var join_label = _make_section_label("Join")
@@ -100,7 +100,7 @@ func _build_network_controls() -> void:
 
 	session_controls_row = HBoxContainer.new()
 	session_controls_row.name = "SessionControlsRow"
-	session_controls_row.custom_constants/separation = 10
+	session_controls_row.add_constant_override("separation", 10)
 	_insert_row_before_scroll(session_controls_row)
 
 	var session_label = _make_section_label("Sessions")
