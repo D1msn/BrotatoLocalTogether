@@ -5,7 +5,9 @@ const BASE_DIR := "brotato_local_together"
 const CONFIG_PATH := "user://brotato_local_together/compat.cfg"
 const CONFIG_SECTION := "bootstrap"
 const DEFAULT_SAFE_BOOTSTRAP_ENABLED := true
-const DEFAULT_EXTENSION_ROLLOUT_COUNT := 8
+const DEFAULT_EXTENSION_ROLLOUT_COUNT := -1
+const LEGACY_EXTENSION_ROLLOUT_COUNT := 8
+const CONFIG_KEY_ROLLOUT_MIGRATED := "rollout_migrated_to_full"
 
 var safe_bootstrap_enabled := DEFAULT_SAFE_BOOTSTRAP_ENABLED
 var extension_rollout_count := DEFAULT_EXTENSION_ROLLOUT_COUNT
@@ -34,6 +36,23 @@ func load_config(default_enabled_groups: Array) -> void:
 			"extension_rollout_count",
 			DEFAULT_EXTENSION_ROLLOUT_COUNT
 		))
+		var rollout_migrated = bool(config.get_value(
+			CONFIG_SECTION,
+			CONFIG_KEY_ROLLOUT_MIGRATED,
+			false
+		))
+		# Миграция старых конфигов: rollout=8 отсекал UI/singleton-extensions
+		# и приводил к запуску базовых скриптов без наших safety-фиксов.
+		if not rollout_migrated and extension_rollout_count == LEGACY_EXTENSION_ROLLOUT_COUNT:
+			extension_rollout_count = DEFAULT_EXTENSION_ROLLOUT_COUNT
+			config.set_value(CONFIG_SECTION, "extension_rollout_count", extension_rollout_count)
+			config.set_value(CONFIG_SECTION, CONFIG_KEY_ROLLOUT_MIGRATED, true)
+			var migrate_result = config.save(CONFIG_PATH)
+			if migrate_result != OK:
+				ModLoaderLog.warning(
+					"Не удалось сохранить миграцию rollout в compat.cfg (код %s)." % str(migrate_result),
+					LOG_NAME
+				)
 
 		var stored_enabled = config.get_value(CONFIG_SECTION, "enabled_extension_groups", default_enabled_groups)
 		if stored_enabled is Array:
@@ -120,6 +139,7 @@ func _save_config(
 	config.set_value(CONFIG_SECTION, "enabled_extension_groups", config_enabled_groups)
 	config.set_value(CONFIG_SECTION, "disabled_extension_groups", disabled_extension_groups)
 	config.set_value(CONFIG_SECTION, "disabled_extension_paths", disabled_extension_paths)
+	config.set_value(CONFIG_SECTION, CONFIG_KEY_ROLLOUT_MIGRATED, true)
 	config.set_value(CONFIG_SECTION, "last_enabled_groups", last_enabled_groups)
 	config.set_value(CONFIG_SECTION, "last_disabled_groups", last_disabled_groups)
 	config.set_value(CONFIG_SECTION, "last_enabled_extensions", last_enabled_extensions)

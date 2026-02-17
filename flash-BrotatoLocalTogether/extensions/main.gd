@@ -143,6 +143,23 @@ func _ready():
 	_append_core_trace("_ready end")
 
 
+func _exit_tree() -> void:
+	in_multiplayer_game = false
+	waiting_to_start_round = false
+	if steam_connection != null:
+		_disconnect_network_signal("client_status_received", "_client_status_received")
+		_disconnect_network_signal("host_starts_round", "_host_starts_round")
+		_disconnect_network_signal("state_update", "_state_update")
+		_disconnect_network_signal("client_position", "_update_player_position")
+		_disconnect_network_signal("client_menu_focus", "_update_client_focus")
+		_disconnect_network_signal("client_main_scene_reroll_button_pressed", "_client_reroll_button_pressed")
+		_disconnect_network_signal("client_main_scene_choose_upgrade_pressed", "_client_choose_upgrade_button_pressed")
+		_disconnect_network_signal("client_main_scene_take_button_pressed", "_client_take_button_pressed")
+		_disconnect_network_signal("client_main_scene_discard_button_pressed", "_client_discard_button_pressed")
+		_disconnect_network_signal("host_entered_shop", "_host_entered_shop")
+	_append_core_trace("_exit_tree complete")
+
+
 func _connect_network_signal(signal_name: String, method_name: String) -> void:
 	if steam_connection == null:
 		return
@@ -154,6 +171,15 @@ func _connect_network_signal(signal_name: String, method_name: String) -> void:
 		_append_core_trace("signal connect failed: %s -> %s (%s)" % [signal_name, method_name, str(connect_result)])
 	else:
 		_append_core_trace("signal connected: %s -> %s" % [signal_name, method_name])
+
+
+func _disconnect_network_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	if not steam_connection.is_connected(signal_name, self, method_name):
+		return
+	steam_connection.disconnect(signal_name, self, method_name)
+	_append_core_trace("signal disconnected: %s -> %s" % [signal_name, method_name])
 
 
 func _core_info(message: String) -> void:
@@ -790,31 +816,67 @@ func spawn_enemy(enemy_dict) -> void:
 	var filename = enemy_dict["FILENAME"]
 	var resource_path = enemy_dict["RESOURCE_PATH"]
 	var enemy_id = enemy_dict["NETWORK_ID"]
-	
-	var enemy = load(filename).instance()
+
+	if not ResourceLoader.exists(filename):
+		_core_warn_once("spawn_enemy_missing_scene_" + str(filename), "Не найден enemy scene: %s" % str(filename))
+		client_pending_ids.erase(enemy_id)
+		return
+
+	var enemy_scene = load(filename)
+	if enemy_scene == null:
+		_core_warn_once("spawn_enemy_load_scene_failed_" + str(filename), "Не удалось загрузить enemy scene: %s" % str(filename))
+		client_pending_ids.erase(enemy_id)
+		return
+
+	var enemy = enemy_scene.instance()
+	if enemy == null:
+		_core_warn_once("spawn_enemy_instance_failed_" + str(filename), "Не удалось создать instance enemy scene: %s" % str(filename))
+		client_pending_ids.erase(enemy_id)
+		return
 	
 	var position : Vector2 = Vector2(enemy_dict["X_POS"], enemy_dict["Y_POS"])
 	enemy.position = position
-	enemy.stats = load(resource_path)
+	if ResourceLoader.exists(resource_path):
+		var enemy_stats = load(resource_path)
+		if enemy_stats != null:
+			enemy.stats = enemy_stats
+	else:
+		_core_warn_once("spawn_enemy_missing_stats_" + str(resource_path), "Не найден ресурс enemy stats: %s" % str(resource_path))
 	
 	client_enemies[enemy_id] = enemy
 	client_pending_ids.erase(enemy_id)
 	
-	var movement_behavior = enemy.get_node("MovementBehavior")
-	enemy.remove_child(movement_behavior)
-	var client_movement_behavior = ClientMovementBehavior.new()
-	client_movement_behavior.set_name("MovementBehavior")
-	enemy.add_child(client_movement_behavior, true)
-	enemy._current_movement_behavior = client_movement_behavior
+	var movement_behavior = enemy.get_node_or_null("MovementBehavior")
+	if movement_behavior != null:
+		enemy.remove_child(movement_behavior)
+		var client_movement_behavior = ClientMovementBehavior.new()
+		client_movement_behavior.set_name("MovementBehavior")
+		enemy.add_child(client_movement_behavior, true)
+		enemy._current_movement_behavior = client_movement_behavior
+	else:
+		_core_warn_once(
+			"spawn_enemy_missing_movement_behavior_" + str(filename),
+			"У врага %s отсутствует MovementBehavior, используется штатное поведение." % str(filename)
+		)
 	
-	var attack_behavior = enemy.get_node("AttackBehavior")
-	enemy.remove_child(attack_behavior)
-	var client_attack_behavior = ClientAttackBehavior.new()
-	client_attack_behavior.set_name("AttackBehavior")
-	enemy.add_child(client_attack_behavior, true)
-	enemy._current_attack_behavior = client_attack_behavior
+	var attack_behavior = enemy.get_node_or_null("AttackBehavior")
+	if attack_behavior != null:
+		enemy.remove_child(attack_behavior)
+		var client_attack_behavior = ClientAttackBehavior.new()
+		client_attack_behavior.set_name("AttackBehavior")
+		enemy.add_child(client_attack_behavior, true)
+		enemy._current_attack_behavior = client_attack_behavior
+	else:
+		_core_warn_once(
+			"spawn_enemy_missing_attack_behavior_" + str(filename),
+			"У врага %s отсутствует AttackBehavior, используется штатное поведение." % str(filename)
+		)
 	
-	_entities_container.add_child(enemy)
+	if _entities_container != null and is_instance_valid(_entities_container):
+		_entities_container.add_child(enemy)
+	else:
+		_core_warn_once("spawn_enemy_no_entities_container", "Не найден _entities_container, враг удалён.")
+		enemy.queue_free()
 
 
 func multiplayer_ready():

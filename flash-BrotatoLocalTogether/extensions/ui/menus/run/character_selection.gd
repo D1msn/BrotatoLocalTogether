@@ -1,22 +1,24 @@
 extends "res://ui/menus/run/character_selection.gd"
 
 const UsernameLabel = preload("res://mods-unpacked/flash-BrotatoLocalTogether/ui/username_label.tscn")
-const DiagnosticsLogger = preload("res://mods-unpacked/flash-BrotatoLocalTogether/logging/diagnostics_logger.gd")
 
 const MULTIPLAYER_CLIENT_PLAYER_TYPE = 10
+const DIAG_DIR := "user://brotato_local_together"
+const DIAG_LOG_PATH := DIAG_DIR + "/diagnostics.log"
 
 var steam_connection
 var brotatogether_options
 
 var is_multiplayer_lobby = false
+var _input_ready = false
 
 # Mapped inventory item by item keys.  Used to reset focus based on external
 # calls.
-var inventory_by_string_key : Dictionary
+var inventory_by_string_key : Dictionary = {}
 
 # Mapped Selections by item keys.  Kept independent of itnentory items to
 # avoid complications around randoms, locked items, etc.
-var selections_by_string_key : Dictionary
+var selections_by_string_key : Dictionary = {}
 
 var username_labels = []
 var external_focus = false
@@ -24,8 +26,16 @@ var lobby_member_count_at_scene_init : int = -1
 var lobby_reload_pending : bool = false
 
 
+func _enter_tree() -> void:
+	# Блокируем input callback до завершения полной инициализации lobby.
+	set_process_input(false)
+
+
 func _ready():
-	steam_connection = $"/root/NetworkConnection"
+	steam_connection = get_node_or_null("/root/NetworkConnection")
+	if steam_connection == null:
+		_diag("ready abort: no /root/NetworkConnection")
+		return
 	_diag("ready start")
 	_connect_steam_signal("player_focused_character", "_player_focused_character")
 	_connect_steam_signal("player_selected_character", "_player_selected_character")
@@ -36,7 +46,12 @@ func _ready():
 	# Перезагрузка сцены на каждое событие лобби вызывала фриз/зацикливание.
 	_connect_steam_signal("lobby_players_updated", "_on_lobby_players_updated")
 	
-	brotatogether_options = $"/root/BrotogetherOptions"
+	brotatogether_options = get_node_or_null("/root/BrotogetherOptions")
+	if brotatogether_options == null:
+		_diag("ready abort: no /root/BrotogetherOptions")
+		_input_ready = true
+		set_process_input(true)
+		return
 	is_multiplayer_lobby = brotatogether_options.joining_multiplayer_lobby
 	_diag("ready lobby=%s current_mode=%s players=%s" % [
 		str(is_multiplayer_lobby),
@@ -45,14 +60,19 @@ func _ready():
 	])
 	
 	if is_multiplayer_lobby:
+		inventory_by_string_key.clear()
+		selections_by_string_key.clear()
+		username_labels.clear()
 		ProgressData.settings.coop_mode_toggled = true
-		# Для сетевого лобби всегда включаем coop-режим до добавления игроков,
-		# иначе базовый UI пытается фокусить как в SOLO и ловит grab_focus вне tree.
-		if current_mode != RunData.PlayMode.COOP:
+		var need_coop_mode = current_mode != RunData.PlayMode.COOP
+		if need_coop_mode:
 			_play_mode_init(RunData.PlayMode.COOP, false)
+
 		_coop_button.hide()
 		var run_options_top_panel = _run_options_panel.get_node("MarginContainer/VBoxContainer/HBoxContainer")
-		run_options_top_panel.remove_child(run_options_top_panel.get_node("Icon"))
+		var run_options_icon = run_options_top_panel.get_node_or_null("Icon")
+		if run_options_icon != null:
+			run_options_top_panel.remove_child(run_options_icon)
 		
 		var username_label_player_1 : Label = UsernameLabel.instance()
 		$"MarginContainer/VBoxContainer/DescriptionContainer/HBoxContainer/Panel1/vboxContainer".add_child(username_label_player_1)
@@ -76,17 +96,23 @@ func _ready():
 		
 		_update_username_labels()
 		lobby_member_count_at_scene_init = steam_connection.lobby_members.size()
+		CoopService.clear_coop_players()
 		var used_devices := {0: true}
+		var local_added := false
 		
-		for member_index in steam_connection.lobby_members.size():
+		for member_index in range(steam_connection.lobby_members.size()):
 			var member_id = steam_connection.lobby_members[member_index]
 			if member_id == steam_connection.steam_id:
 				CoopService._add_player(0, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+				local_added = true
 				_diag("add_player member=%s device=0 local=true" % str(member_index))
 			else:
 				var remote_device = _allocate_remote_device(used_devices)
 				CoopService._add_player(remote_device, MULTIPLAYER_CLIENT_PLAYER_TYPE)
 				_diag("add_player member=%s device=%s local=false" % [str(member_index), str(remote_device)])
+		if not local_added:
+			CoopService._add_player(0, MULTIPLAYER_CLIENT_PLAYER_TYPE)
+			_diag("add_player local fallback device=0")
 			
 		for character_data in _get_all_possible_elements(0):
 			selections_by_string_key[character_item_to_string(character_data)] = character_data
@@ -98,10 +124,14 @@ func _ready():
 				selections_by_string_key[character_item_to_string(character_data)] = character_data
 			else:
 				inventory_by_string_key[character_item_to_string(character_data.item)] = character_data
+	_input_ready = true
+	set_process_input(true)
 	_diag("ready end")
 
 
 func _input(event: InputEvent) -> void:
+	if not _input_ready:
+		return
 	var focus_owner = get_focus_owner()
 	if RunData.is_coop_run and RunData.get_player_count() == 0 and focus_owner == null and event.is_action_pressed("ui_up"):
 		_diag("input ui_up with zero players; schedule safe focus")
@@ -189,6 +219,12 @@ func _update_username_labels() -> void:
 
 
 func _on_element_focused(element:InventoryElement, inventory_player_index:int, _displayPanelData: bool = true) -> void:
+	if is_multiplayer_lobby and RunData.is_coop_run:
+		var emitted_player_index = FocusEmulatorSignal.get_player_index(element)
+		if emitted_player_index < 0 and inventory_player_index >= 0:
+			# В сетевом лобби события фокуса иногда приходят вне FocusEmulatorSignal.
+			# Подставляем ожидаемый control/index, чтобы базовый код не падал.
+			FocusEmulatorSignal.set_expected_control(element, inventory_player_index)
 	._on_element_focused(element, inventory_player_index)
 	
 	if is_multiplayer_lobby:
@@ -354,7 +390,57 @@ func _allocate_remote_device(used_devices: Dictionary) -> int:
 	return 1
 
 
+func _on_CoopButton_focus_entered():
+	# В сетевом лобби возможен фокус без FocusEmulatorSignal метаданных.
+	# Безопасно деградируем до игрока 0 и избегаем push_error в базовом скрипте.
+	if _coop_button == null or not is_instance_valid(_coop_button):
+		return
+	var player_index = FocusEmulatorSignal.get_player_index(_coop_button)
+	if player_index < 0:
+		player_index = 0
+	if player_index != 0:
+		return
+	if player_index >= _latest_focused_element.size():
+		return
+	__restore_player0_element = _latest_focused_element[player_index]
+
+
 func _diag(message: String) -> void:
-	DiagnosticsLogger.log_with_options(brotatogether_options, "CharacterSelectionExt", message)
+	if brotatogether_options != null:
+		var enabled_value = brotatogether_options.get("diagnostics_log_enabled")
+		if typeof(enabled_value) == TYPE_BOOL and not enabled_value:
+			return
+
+	var dir := Directory.new()
+	if dir.open("user://") != OK:
+		return
+	if not dir.dir_exists("brotato_local_together"):
+		var _make_result = dir.make_dir("brotato_local_together")
+
+	var dt = OS.get_datetime()
+	var ts = "%04d-%02d-%02d %02d:%02d:%02d" % [
+		int(dt.year),
+		int(dt.month),
+		int(dt.day),
+		int(dt.hour),
+		int(dt.minute),
+		int(dt.second),
+	]
+	var line = "[%s] CharacterSelectionExt: %s" % [ts, message]
+
+	var file := File.new()
+	var open_result = file.open(DIAG_LOG_PATH, File.READ_WRITE)
+	if open_result != OK:
+		open_result = file.open(DIAG_LOG_PATH, File.WRITE)
+		if open_result != OK:
+			return
+		print("BrotatoLocalTogether diagnostics path: " + ProjectSettings.globalize_path(DIAG_LOG_PATH))
+		file.store_line(line)
+		file.close()
+		return
+
+	file.seek_end()
+	file.store_line(line)
+	file.close()
 
 

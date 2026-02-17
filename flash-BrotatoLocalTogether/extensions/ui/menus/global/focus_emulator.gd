@@ -1,7 +1,5 @@
 extends "res://ui/menus/global/focus_emulator.gd"
 
-const DiagnosticsLogger = preload("res://mods-unpacked/flash-BrotatoLocalTogether/logging/diagnostics_logger.gd")
-
 var global_focused_control
 var steam_connection
 var brotatogether_options
@@ -118,4 +116,6 @@ func _ready_base_safe() -> void:
 
 
 func _diag(message: String) -> void:
-	DiagnosticsLogger.log_with_options(brotatogether_options, "FocusEmulatorExt", message)
+	var logger_script = load("res://mods-unpacked/flash-BrotatoLocalTogether/logging/diagnostics_logger.gd")
+	if logger_script != null and logger_script.has_method("log_with_options"):
+		logger_script.log_with_options(brotatogether_options, "FocusEmulatorExt", message)

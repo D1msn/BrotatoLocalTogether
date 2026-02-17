@@ -3,7 +3,6 @@ extends Reference
 const BASE_DIR := "user://brotato_local_together"
 const LOG_PATH := BASE_DIR + "/diagnostics.log"
 const MAX_SIZE_BYTES := 1024 * 1024
-static var _path_announced := false
 
 
 static func log_with_options(options_node, tag: String, message: String) -> void:
@@ -15,8 +14,6 @@ static func log_with_options(options_node, tag: String, message: String) -> void
 
 
 static func log(tag: String, message: String) -> void:
-	_announce_path_once()
-
 	var dir := Directory.new()
 	if dir.open("user://") != OK:
 		return
@@ -24,6 +21,9 @@ static func log(tag: String, message: String) -> void:
 		var _make_result = dir.make_dir("brotato_local_together")
 
 	var line := "[%s] %s: %s" % [_timestamp_iso(), tag, message]
+	var file_exists = File.new().file_exists(LOG_PATH)
+	if not file_exists:
+		print("BrotatoLocalTogether diagnostics path: " + ProjectSettings.globalize_path(LOG_PATH))
 
 	var file := File.new()
 	var open_result = file.open(LOG_PATH, File.READ_WRITE)
@@ -57,10 +57,3 @@ static func _timestamp_iso() -> String:
 		int(dt.minute),
 		int(dt.second),
 	]
-
-
-static func _announce_path_once() -> void:
-	if _path_announced:
-		return
-	_path_announced = true
-	print("BrotatoLocalTogether diagnostics path: " + ProjectSettings.globalize_path(LOG_PATH))

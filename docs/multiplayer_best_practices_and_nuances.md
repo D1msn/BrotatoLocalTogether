@@ -92,6 +92,11 @@
 5. Resume-сессии привязаны к endpoint + token + session TTL.
 - Не менять формат snapshot/session без версии и migration-плана.
 
+6. Для стабильного запуска extension rollout должен быть полным.
+- `compat.cfg` с `extension_rollout_count=8` отрезает часть `ui_*` и `singletons` extension.
+- Результат: запускаются базовые скрипты без LAN safety-fallback (в т.ч. фокус/scene lifecycle), появляются ошибки типа `Focus emulator signal not triggered`.
+- Текущий безопасный дефолт: `extension_rollout_count=-1` и миграция legacy-конфига при загрузке.
+
 ## Приоритет внедрения (практический)
 
 ### P0 (сначала)
@@ -107,4 +112,3 @@
 ### P2
 - Добавить метрики сети в лог (packet size, resend, jitter, RTT p50/p95).
 - Добавить crash-safe flush на ключевых фазах (shop start/end, wave start/end, scene commit).
-

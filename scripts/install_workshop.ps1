@@ -5,7 +5,7 @@ param(
     [string]$GameDir = "D:\steam\steamapps\common\Brotato",
     [string]$ModId = "flash-BrotatoLocalTogether",
     [bool]$CompatSafeBootstrapEnabled = $true,
-    [int]$CompatRolloutCount = 8,
+    [int]$CompatRolloutCount = -1,
     [switch]$FullMod,
     [bool]$WriteCompatConfig = $true,
     [bool]$ClearModLoaderCache = $true,
