@@ -28,6 +28,8 @@ const ENVELOPE_KEY_PAYLOAD := "PAYLOAD"
 const ENVELOPE_KEY_COMPRESSED := "COMPRESSED"
 const COMPRESSION_THRESHOLD_BYTES := 512
 const LOG_NAME := "BrotatoLocalTogether:SessionConnection"
+const NETWORK_METRICS_NODE_NAME := "NetworkMetrics"
+const DIAGNOSTICS_LOGGER_PATH := "res://mods-unpacked/flash-BrotatoLocalTogether/logging/diagnostics_logger.gd"
 const SCENE_TRANSITION_TIMEOUT_MSEC := 12000
 const SCENE_TRANSITION_RETRY_MSEC := 1000
 const SCENE_TRANSITION_ROLE_HOST := "host"
@@ -61,6 +63,7 @@ var last_rejection_reason : String = ""
 var pending_restore_snapshot : Dictionary = {}
 var pending_client_recovery_state : Dictionary = {}
 var attempted_tokenless_retry : bool = false
+var network_metrics_node : Node = null
 var scene_transition_active : bool = false
 var scene_transition_role : String = ""
 var scene_transition_id : String = ""
@@ -413,14 +416,17 @@ func send_p2p_packet(data : Dictionary, message_type : int, target_id = -1) -> v
 			for peer_id in connected_peers:
 				if peer_id == steam_id:
 					continue
+				_record_packet_sent_metrics(message_type, packet_data.size())
 				_send_rpc_packet(int(peer_id), message_type, packet_data)
 		elif game_lobby_owner_id > 0:
+			_record_packet_sent_metrics(message_type, packet_data.size())
 			_send_rpc_packet(game_lobby_owner_id, message_type, packet_data)
 		return
 
 	if target_id == steam_id:
 		return
 
+	_record_packet_sent_metrics(message_type, packet_data.size())
 	_send_rpc_packet(int(target_id), message_type, packet_data)
 
 
@@ -455,14 +461,21 @@ remote func _receive_enet_packet(message_type : int, packet_data : PoolByteArray
 			return
 		packet["payload"] = unpacked_payload
 
-	_dispatch_incoming_packet(int(packet.get("message_type", message_type)), packet.get("payload", {}), sender_id)
+	_dispatch_incoming_packet(
+		int(packet.get("message_type", message_type)),
+		packet.get("payload", {}),
+		sender_id,
+		packet_data.size()
+	)
 
 
 func read_p2p_packet() -> void:
 	return
 
 
-func _dispatch_incoming_packet(channel : int, data : Dictionary, sender_id : int) -> void:
+func _dispatch_incoming_packet(channel : int, data : Dictionary, sender_id : int, packet_size: int = -1) -> void:
+	if packet_size >= 0:
+		_record_packet_received_metrics(channel, packet_size)
 	if not _is_allowed_sender_for_message(channel, sender_id):
 		ModLoaderLog.warning("Rejected packet from unknown peer %d" % sender_id, LOG_NAME)
 		return
@@ -1054,6 +1067,27 @@ func _send_register_reject(target_peer_id: int, reason_code: String, reason_text
 		SESSION_MESSAGE_REGISTER_REJECT,
 		target_peer_id
 	)
+
+
+func _respond_to_pong(data : Dictionary) -> void:
+	if not data.has("PING_KEY"):
+		print("WARNING - Pong sent without key")
+		return
+
+	if data["PING_KEY"] != ping_key:
+		print("WARNING - Ping response key doesn't match")
+		return
+
+	if ping_start_time_msec == -1:
+		print("WARNING - Ping request send without starting timer")
+		return
+
+	var current_time_msec = Time.get_ticks_msec()
+	var latency_msec = max(0, current_time_msec - ping_start_time_msec)
+	_record_packet_ack_metrics(1)
+	_record_rtt_sample_metrics(float(latency_msec))
+
+	send_p2p_packet({"LATENCY": str(latency_msec)}, MessageType.MESSAGE_TYPE_LATENCY_REPORT, game_lobby_owner_id)
 
 
 func _next_outgoing_sequence() -> int:
@@ -1970,6 +2004,84 @@ func _is_private_ipv4(address : String) -> bool:
 		return true
 
 	return false
+
+
+func _get_network_metrics_node() -> Node:
+	if network_metrics_node != null and is_instance_valid(network_metrics_node):
+		return network_metrics_node
+	if not is_inside_tree():
+		return null
+	var tree = get_tree()
+	if tree == null or tree.root == null:
+		return null
+	network_metrics_node = tree.root.get_node_or_null(NETWORK_METRICS_NODE_NAME)
+	return network_metrics_node
+
+
+func _record_packet_sent_metrics(message_type: int, packet_size: int) -> void:
+	var metrics = _get_network_metrics_node()
+	if metrics != null and metrics.has_method("record_packet_sent"):
+		metrics.record_packet_sent(message_type, packet_size)
+
+
+func _record_packet_received_metrics(message_type: int, packet_size: int) -> void:
+	var metrics = _get_network_metrics_node()
+	if metrics != null and metrics.has_method("record_packet_received"):
+		metrics.record_packet_received(message_type, packet_size)
+
+
+func _record_packet_ack_metrics(ack_count: int) -> void:
+	var metrics = _get_network_metrics_node()
+	if metrics != null and metrics.has_method("record_packet_acknowledged"):
+		metrics.record_packet_acknowledged(ack_count)
+
+
+func _record_rtt_sample_metrics(rtt_msec: float) -> void:
+	var metrics = _get_network_metrics_node()
+	if metrics != null and metrics.has_method("add_rtt_sample"):
+		metrics.add_rtt_sample(rtt_msec)
+
+
+func get_network_metrics_snapshot() -> Dictionary:
+	var metrics = _get_network_metrics_node()
+	if metrics == null or not metrics.has_method("get_snapshot"):
+		return {}
+	var snapshot = metrics.get_snapshot()
+	if snapshot is Dictionary:
+		return snapshot
+	return {}
+
+
+func dump_network_metrics_to_log() -> void:
+	var snapshot = get_network_metrics_snapshot()
+	if snapshot.empty():
+		ModLoaderLog.info("Network metrics unavailable", LOG_NAME)
+		return
+
+	var options = _get_options()
+	var logger_script = load(DIAGNOSTICS_LOGGER_PATH)
+	if logger_script != null:
+		if logger_script.has_method("log_network_metrics_with_options"):
+			logger_script.log_network_metrics_with_options(options, "NetworkMetrics", snapshot)
+		elif logger_script.has_method("log_with_options"):
+			logger_script.log_with_options(options, "NetworkMetrics", str(snapshot))
+
+	ModLoaderLog.info(
+		(
+			"Network metrics: sent=%d received=%d bytes_sent=%d bytes_received=%d loss=%.3f p50=%.2fms p95=%.2fms jitter=%.2fms"
+			% [
+				int(snapshot.get("packet_sent_count", 0)),
+				int(snapshot.get("packet_received_count", 0)),
+				int(snapshot.get("bytes_sent", 0)),
+				int(snapshot.get("bytes_received", 0)),
+				float(snapshot.get("packet_loss_rate", 0.0)),
+				float(snapshot.get("rtt_p50_msec", 0.0)),
+				float(snapshot.get("rtt_p95_msec", 0.0)),
+				float(snapshot.get("jitter_msec", 0.0)),
+			]
+		),
+		LOG_NAME
+	)
 
 
 func _get_options():

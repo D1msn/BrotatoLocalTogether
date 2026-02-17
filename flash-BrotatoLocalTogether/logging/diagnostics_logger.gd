@@ -13,6 +13,29 @@ static func log_with_options(options_node, tag: String, message: String) -> void
 	log(tag, message)
 
 
+static func log_network_metrics_with_options(options_node, tag: String, metrics: Dictionary) -> void:
+	if metrics.empty():
+		log_with_options(options_node, tag, "metrics unavailable")
+		return
+
+	var message = (
+		"sent=%d recv=%d acked=%d bytes_sent=%d bytes_recv=%d loss=%.3f p50=%.2fms p95=%.2fms jitter=%.2fms samples=%d"
+		% [
+			int(metrics.get("packet_sent_count", 0)),
+			int(metrics.get("packet_received_count", 0)),
+			int(metrics.get("packet_acked_count", 0)),
+			int(metrics.get("bytes_sent", 0)),
+			int(metrics.get("bytes_received", 0)),
+			float(metrics.get("packet_loss_rate", 0.0)),
+			float(metrics.get("rtt_p50_msec", 0.0)),
+			float(metrics.get("rtt_p95_msec", 0.0)),
+			float(metrics.get("jitter_msec", 0.0)),
+			int(metrics.get("rtt_samples_count", 0)),
+		]
+	)
+	log_with_options(options_node, tag, message)
+
+
 static func log(tag: String, message: String) -> void:
 	var dir := Directory.new()
 	if dir.open("user://") != OK:

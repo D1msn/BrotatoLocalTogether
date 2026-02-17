@@ -1,6 +1,8 @@
 extends VBoxContainer
 class_name ShopMonsterContainer
 
+const SignalUtils = preload("res://mods-unpacked/flash-BrotatoLocalTogether/signal_utils.gd")
+
 var _shop_option
 var game_controller
 
@@ -15,7 +17,13 @@ func init(shop_option: Resource, parent_game_controller) -> void:
 	var display_text: String = shop_option.display_text
 	
 	get_node("ShopItem/Title").text = display_text
-	var _connection_error = get_node("ShopItem/VBoxContainer/BuyButton").connect("pressed", self, "_on_buyButton_pressed", [shop_option])
+	var _connection_error = SignalUtils.safe_connect(
+		get_node("ShopItem/VBoxContainer/BuyButton"),
+		"pressed",
+		self,
+		"_on_buyButton_pressed",
+		[shop_option]
+	)
 	
 	if effect is WaveGroupData:
 		for wave_unit_data in effect.wave_units_data:

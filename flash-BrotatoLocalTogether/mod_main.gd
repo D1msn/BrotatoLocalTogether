@@ -2,6 +2,7 @@ extends Node
 
 const LanConnection = preload("res://mods-unpacked/flash-BrotatoLocalTogether/lan_connection.gd")
 const LanOptions = preload("res://mods-unpacked/flash-BrotatoLocalTogether/lan_options.gd")
+const NetworkMetrics = preload("res://mods-unpacked/flash-BrotatoLocalTogether/network_metrics.gd")
 const CompatBootstrap = preload("res://mods-unpacked/flash-BrotatoLocalTogether/compat_bootstrap.gd")
 const ExtensionRegistry = preload("res://mods-unpacked/flash-BrotatoLocalTogether/extension_registry.gd")
 
@@ -10,6 +11,7 @@ const LOG_NAME := "BrotatoLocalTogether:Bootstrap"
 const MOD_DIR = "flash-BrotatoLocalTogether/"
 const CONNECTION_NODE_NAME := "NetworkConnection"
 const OPTIONS_NODE_NAME := "BrotogetherOptions"
+const NETWORK_METRICS_NODE_NAME := "NetworkMetrics"
 const TRACE_DIR := "brotato_local_together"
 const TRACE_PATH := "user://brotato_local_together/bootstrap_trace.log"
 
@@ -32,6 +34,7 @@ func _init():
 
 func _ready():
 	_append_bootstrap_trace("_ready start")
+	_ensure_root_node(NETWORK_METRICS_NODE_NAME, NetworkMetrics)
 	_ensure_root_node(CONNECTION_NODE_NAME, LanConnection)
 	_ensure_root_node(OPTIONS_NODE_NAME, LanOptions)
 	_append_bootstrap_trace("_ready end")

@@ -1,5 +1,7 @@
 extends "res://ui/menus/run/weapon_selection.gd"
 
+const SignalUtils = preload("res://mods-unpacked/flash-BrotatoLocalTogether/signal_utils.gd")
+
 var steam_connection
 var brotatogether_options
 var is_multiplayer_lobby = false
@@ -13,10 +15,10 @@ var inventory_maps : Array
 func _ready():
 	steam_connection = $"/root/NetworkConnection"
 	
-	steam_connection.connect("player_focused_weapon", self, "_player_focused_weapon")
-	steam_connection.connect("player_selected_weapon", self, "_player_selected_weapon")
-	steam_connection.connect("weapon_lobby_update", self, "_lobby_weapons_updated")
-	steam_connection.connect("weapon_selection_completed", self, "_weapon_selection_completed")
+	_connect_network_signal("player_focused_weapon", "_player_focused_weapon")
+	_connect_network_signal("player_selected_weapon", "_player_selected_weapon")
+	_connect_network_signal("weapon_lobby_update", "_lobby_weapons_updated")
+	_connect_network_signal("weapon_selection_completed", "_weapon_selection_completed")
 	
 	brotatogether_options = $"/root/BrotogetherOptions"
 	is_multiplayer_lobby = brotatogether_options.joining_multiplayer_lobby
@@ -31,6 +33,26 @@ func _ready():
 		for inventory_item in _get_inventories()[player_index].get_children():
 			inventory_map[weapon_item_to_string(inventory_item.item)] = inventory_item
 		inventory_maps.push_back(inventory_map)
+
+
+func _exit_tree() -> void:
+	_disconnect_network_signal("player_focused_weapon", "_player_focused_weapon")
+	_disconnect_network_signal("player_selected_weapon", "_player_selected_weapon")
+	_disconnect_network_signal("weapon_lobby_update", "_lobby_weapons_updated")
+	_disconnect_network_signal("weapon_selection_completed", "_weapon_selection_completed")
+	._exit_tree()
+
+
+func _connect_network_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	var _connect_error = SignalUtils.safe_connect(steam_connection, signal_name, self, method_name)
+
+
+func _disconnect_network_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	SignalUtils.safe_disconnect(steam_connection, signal_name, self, method_name)
 
 
 func weapon_item_to_string(item : Resource) -> String:

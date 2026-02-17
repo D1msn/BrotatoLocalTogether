@@ -1,5 +1,7 @@
 extends "res://ui/menus/global/focus_emulator.gd"
 
+const SignalUtils = preload("res://mods-unpacked/flash-BrotatoLocalTogether/signal_utils.gd")
+
 var global_focused_control
 var steam_connection
 var brotatogether_options
@@ -12,20 +14,20 @@ func _ready() -> void:
 	if not is_inside_tree():
 		return
 	var viewport = get_viewport()
-	if viewport != null and not viewport.is_connected("gui_focus_changed", self, "_on_focus_changed_multiplayer"):
-		var _err = viewport.connect("gui_focus_changed", self, "_on_focus_changed_multiplayer")
+	if viewport != null:
+		var _err = SignalUtils.safe_connect(viewport, "gui_focus_changed", self, "_on_focus_changed_multiplayer")
 
 
 func _exit_tree() -> void:
-	if CoopService != null and CoopService.is_connected("connected_players_updated", self, "_on_connected_players_updated"):
-		CoopService.disconnect("connected_players_updated", self, "_on_connected_players_updated")
+	if CoopService != null:
+		SignalUtils.safe_disconnect(CoopService, "connected_players_updated", self, "_on_connected_players_updated")
 		_diag("disconnect connected_players_updated")
 	var viewport = get_viewport()
-	if viewport != null and viewport.is_connected("gui_focus_changed", self, "_on_focus_changed"):
-		viewport.disconnect("gui_focus_changed", self, "_on_focus_changed")
+	if viewport != null:
+		SignalUtils.safe_disconnect(viewport, "gui_focus_changed", self, "_on_focus_changed")
 		_diag("disconnect gui_focus_changed(base)")
-	if viewport != null and viewport.is_connected("gui_focus_changed", self, "_on_focus_changed_multiplayer"):
-		viewport.disconnect("gui_focus_changed", self, "_on_focus_changed_multiplayer")
+	if viewport != null:
+		SignalUtils.safe_disconnect(viewport, "gui_focus_changed", self, "_on_focus_changed_multiplayer")
 		_diag("disconnect gui_focus_changed(multiplayer)")
 
 
@@ -97,9 +99,8 @@ func _resolve_singletons_if_needed() -> void:
 
 func _ready_base_safe() -> void:
 	_on_connected_players_updated(CoopService.connected_players)
-	if not CoopService.is_connected("connected_players_updated", self, "_on_connected_players_updated"):
-		var _connect_players = CoopService.connect("connected_players_updated", self, "_on_connected_players_updated")
-		_diag("connect connected_players_updated")
+	var _connect_players = SignalUtils.safe_connect(CoopService, "connected_players_updated", self, "_on_connected_players_updated")
+	_diag("connect connected_players_updated")
 
 	_focus_base_nodes.clear()
 	for base in focus_base_data:
@@ -110,8 +111,8 @@ func _ready_base_safe() -> void:
 		_focus_base_nodes.append(node)
 
 	var viewport = get_viewport()
-	if viewport != null and not viewport.is_connected("gui_focus_changed", self, "_on_focus_changed"):
-		var _connect_focus = viewport.connect("gui_focus_changed", self, "_on_focus_changed")
+	if viewport != null:
+		var _connect_focus = SignalUtils.safe_connect(viewport, "gui_focus_changed", self, "_on_focus_changed")
 		_diag("connect gui_focus_changed(base)")
 
 

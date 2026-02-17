@@ -1,6 +1,7 @@
 extends Control
 
 const LobbyEntry = preload("res://mods-unpacked/flash-BrotatoLocalTogether/ui/lobby_entry.tscn")
+const SignalUtils = preload("res://mods-unpacked/flash-BrotatoLocalTogether/signal_utils.gd")
 
 onready var lobbies_list = $"%Lobbies"
 onready var create_lobby_button : Button = $"%CreateLobbyButton"
@@ -18,6 +19,7 @@ var join_endpoint_input : LineEdit
 var join_endpoint_button : Button
 var resume_snapshot_button : Button
 var reset_sessions_button : Button
+var log_metrics_button : Button
 var host_controls_row : HBoxContainer
 var join_controls_row : HBoxContainer
 var session_controls_row : HBoxContainer
@@ -28,7 +30,7 @@ var shown_lobbies : Dictionary = {}
 
 func _ready() -> void:
 	steam_connection = $"/root/NetworkConnection"
-	steam_connection.connect("game_lobby_found", self, "_game_lobby_found")
+	SignalUtils.safe_connect(steam_connection, "game_lobby_found", self, "_game_lobby_found")
 
 	brotatogether_options = $"/root/BrotogetherOptions"
 	_build_network_controls()
@@ -41,6 +43,25 @@ func _ready() -> void:
 		call_deferred("_safe_focus_create_lobby_button")
 	CoopService.clear_coop_players()
 	_on_refresh_lobbies_button_pressed()
+
+
+func _exit_tree() -> void:
+	if steam_connection != null:
+		SignalUtils.safe_disconnect(steam_connection, "game_lobby_found", self, "_game_lobby_found")
+	if host_port_input != null:
+		SignalUtils.safe_disconnect(host_port_input, "text_entered", self, "_on_host_port_text_entered")
+	if advertise_ip_input != null:
+		SignalUtils.safe_disconnect(advertise_ip_input, "text_entered", self, "_on_advertise_ip_text_entered")
+	if join_endpoint_input != null:
+		SignalUtils.safe_disconnect(join_endpoint_input, "text_entered", self, "_on_join_endpoint_text_entered")
+	if join_endpoint_button != null:
+		SignalUtils.safe_disconnect(join_endpoint_button, "pressed", self, "_on_join_endpoint_button_pressed")
+	if resume_snapshot_button != null:
+		SignalUtils.safe_disconnect(resume_snapshot_button, "pressed", self, "_on_resume_snapshot_button_pressed")
+	if reset_sessions_button != null:
+		SignalUtils.safe_disconnect(reset_sessions_button, "pressed", self, "_on_reset_sessions_button_pressed")
+	if log_metrics_button != null:
+		SignalUtils.safe_disconnect(log_metrics_button, "pressed", self, "_on_log_metrics_button_pressed")
 
 
 func _build_network_controls() -> void:
@@ -62,7 +83,7 @@ func _build_network_controls() -> void:
 	host_port_input.placeholder_text = "Port"
 	host_port_input.rect_min_size = Vector2(120, 0)
 	host_port_input.text = str(brotatogether_options.host_port)
-	host_port_input.connect("text_entered", self, "_on_host_port_text_entered")
+	SignalUtils.safe_connect(host_port_input, "text_entered", self, "_on_host_port_text_entered")
 	host_controls_row.add_child(host_port_input)
 
 	advertise_ip_input = LineEdit.new()
@@ -71,7 +92,7 @@ func _build_network_controls() -> void:
 	advertise_ip_input.rect_min_size = Vector2(280, 0)
 	advertise_ip_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	advertise_ip_input.text = brotatogether_options.preferred_advertise_ip
-	advertise_ip_input.connect("text_entered", self, "_on_advertise_ip_text_entered")
+	SignalUtils.safe_connect(advertise_ip_input, "text_entered", self, "_on_advertise_ip_text_entered")
 	host_controls_row.add_child(advertise_ip_input)
 
 	join_controls_row = HBoxContainer.new()
@@ -88,14 +109,14 @@ func _build_network_controls() -> void:
 	join_endpoint_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	join_endpoint_input.rect_min_size = Vector2(320, 0)
 	join_endpoint_input.text = brotatogether_options.last_join_endpoint
-	join_endpoint_input.connect("text_entered", self, "_on_join_endpoint_text_entered")
+	SignalUtils.safe_connect(join_endpoint_input, "text_entered", self, "_on_join_endpoint_text_entered")
 	join_controls_row.add_child(join_endpoint_input)
 
 	join_endpoint_button = Button.new()
 	join_endpoint_button.name = "JoinEndpointButton"
 	join_endpoint_button.text = "Join Endpoint"
 	join_endpoint_button.rect_min_size = Vector2(190, 0)
-	join_endpoint_button.connect("pressed", self, "_on_join_endpoint_button_pressed")
+	SignalUtils.safe_connect(join_endpoint_button, "pressed", self, "_on_join_endpoint_button_pressed")
 	join_controls_row.add_child(join_endpoint_button)
 
 	session_controls_row = HBoxContainer.new()
@@ -110,15 +131,22 @@ func _build_network_controls() -> void:
 	resume_snapshot_button.name = "ResumeSnapshotButton"
 	resume_snapshot_button.text = "Resume Snapshot"
 	resume_snapshot_button.rect_min_size = Vector2(210, 0)
-	resume_snapshot_button.connect("pressed", self, "_on_resume_snapshot_button_pressed")
+	SignalUtils.safe_connect(resume_snapshot_button, "pressed", self, "_on_resume_snapshot_button_pressed")
 	session_controls_row.add_child(resume_snapshot_button)
 
 	reset_sessions_button = Button.new()
 	reset_sessions_button.name = "ResetSessionsButton"
 	reset_sessions_button.text = "Reset Sessions"
 	reset_sessions_button.rect_min_size = Vector2(190, 0)
-	reset_sessions_button.connect("pressed", self, "_on_reset_sessions_button_pressed")
+	SignalUtils.safe_connect(reset_sessions_button, "pressed", self, "_on_reset_sessions_button_pressed")
 	session_controls_row.add_child(reset_sessions_button)
+
+	log_metrics_button = Button.new()
+	log_metrics_button.name = "LogMetricsButton"
+	log_metrics_button.text = "Log Metrics"
+	log_metrics_button.rect_min_size = Vector2(170, 0)
+	SignalUtils.safe_connect(log_metrics_button, "pressed", self, "_on_log_metrics_button_pressed")
+	session_controls_row.add_child(log_metrics_button)
 
 	endpoints_label = _make_section_label("Available Endpoints")
 	_insert_row_before_scroll(endpoints_label)
@@ -226,6 +254,14 @@ func _on_reset_sessions_button_pressed() -> void:
 		join_endpoint_input.text = ""
 	_append_system_message("Session data reset. Start from clean state.")
 	_on_refresh_lobbies_button_pressed()
+
+
+func _on_log_metrics_button_pressed() -> void:
+	if steam_connection == null:
+		return
+	if steam_connection.has_method("dump_network_metrics_to_log"):
+		steam_connection.dump_network_metrics_to_log()
+		_append_system_message("Network metrics logged.")
 
 
 func _on_refresh_lobbies_button_pressed() -> void:

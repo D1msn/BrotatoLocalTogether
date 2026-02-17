@@ -1,5 +1,6 @@
 extends "res://ui/menus/pages/main_menu.gd"
 
+const SignalUtils = preload("res://mods-unpacked/flash-BrotatoLocalTogether/signal_utils.gd")
 
 var multiplayer_button: Button
 
@@ -16,8 +17,8 @@ func _ready():
 	multiplayer_button.text = "Multiplayer"
 	multiplayer_button.name = "MultiplayerButton"
 
-	var _unused = multiplayer_button.connect("pressed", self, "_on_MultiplayerButton_pressed")
-	multiplayer_button.disconnect("pressed", self, "_on_StartButton_pressed")
+	var _unused = SignalUtils.safe_connect(multiplayer_button, "pressed", self, "_on_MultiplayerButton_pressed")
+	SignalUtils.safe_disconnect(multiplayer_button, "pressed", self, "_on_StartButton_pressed")
 
 	buttons_node.add_child_below_node(buttons_node.get_children()[0], multiplayer_button)
 	buttons_node.move_child(multiplayer_button, 0)
