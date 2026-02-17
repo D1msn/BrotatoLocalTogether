@@ -8,7 +8,7 @@ var is_host = false
 
 
 func _ready():
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 	in_multiplayer_game = brotatogether_options.in_multiplayer_game
 	

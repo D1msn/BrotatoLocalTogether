@@ -69,4 +69,4 @@ func _resolve_singletons_if_needed() -> void:
 	if brotatogether_options == null:
 		brotatogether_options = get_node_or_null("/root/BrotogetherOptions")
 	if steam_connection == null:
-		steam_connection = get_node_or_null("/root/SteamConnection")
+		steam_connection = get_node_or_null("/root/NetworkConnection")

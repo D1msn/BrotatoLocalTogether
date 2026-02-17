@@ -5,7 +5,7 @@ var brotatogether_options
 
 
 func _ready():
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 
 

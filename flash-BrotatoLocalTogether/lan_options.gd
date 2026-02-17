@@ -12,8 +12,10 @@ const BASE_DIR := "brotato_local_together"
 const NETWORK_CONFIG_PATH := "user://brotato_local_together/network.cfg"
 const NETWORK_CONFIG_SECTION := "network"
 const DEFAULT_HOST_PORT := 24567
+const DEFAULT_SAFE_CORE_MODE := true
 
 var host_port : int = DEFAULT_HOST_PORT
+var core_safe_mode : bool = DEFAULT_SAFE_CORE_MODE
 var preferred_advertise_ip : String = ""
 var last_join_endpoint : String = ""
 var local_username : String = ""
@@ -99,6 +101,7 @@ func _load_network_config() -> void:
 
 	host_port = int(config.get_value(NETWORK_CONFIG_SECTION, "host_port", DEFAULT_HOST_PORT))
 	host_port = clamp(host_port, 1024, 65535)
+	core_safe_mode = bool(config.get_value(NETWORK_CONFIG_SECTION, "core_safe_mode", DEFAULT_SAFE_CORE_MODE))
 
 	preferred_advertise_ip = String(config.get_value(NETWORK_CONFIG_SECTION, "preferred_advertise_ip", ""))
 	last_join_endpoint = String(config.get_value(NETWORK_CONFIG_SECTION, "last_join_endpoint", ""))
@@ -112,6 +115,7 @@ func _load_network_config() -> void:
 func _save_network_config() -> void:
 	var config := ConfigFile.new()
 	config.set_value(NETWORK_CONFIG_SECTION, "host_port", host_port)
+	config.set_value(NETWORK_CONFIG_SECTION, "core_safe_mode", core_safe_mode)
 	config.set_value(NETWORK_CONFIG_SECTION, "preferred_advertise_ip", preferred_advertise_ip)
 	config.set_value(NETWORK_CONFIG_SECTION, "last_join_endpoint", last_join_endpoint)
 	config.set_value(NETWORK_CONFIG_SECTION, "local_username", local_username)

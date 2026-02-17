@@ -8,6 +8,8 @@ const ExtensionRegistry = preload("res://mods-unpacked/flash-BrotatoLocalTogethe
 const LOG_NAME := "BrotatoLocalTogether:Bootstrap"
 
 const MOD_DIR = "flash-BrotatoLocalTogether/"
+const CONNECTION_NODE_NAME := "NetworkConnection"
+const OPTIONS_NODE_NAME := "BrotogetherOptions"
 
 var dir = ""
 var ext_dir = ""
@@ -23,15 +25,47 @@ func _init():
 
 
 func _ready():
-	var lan_connection = LanConnection.new()
-	# Оставляем старое имя ноды для совместимости с существующими extension-скриптами.
-	lan_connection.set_name("SteamConnection")
-	$"/root".call_deferred("add_child", lan_connection)
-	
-	var options_node = LanOptions.new()
-	# Оставляем старое имя ноды для совместимости с существующими extension-скриптами.
-	options_node.set_name("BrotogetherOptions")
-	$"/root".call_deferred("add_child", options_node)
+	_ensure_root_node(CONNECTION_NODE_NAME, LanConnection)
+	_ensure_root_node(OPTIONS_NODE_NAME, LanOptions)
+
+
+func _ensure_root_node(node_name: String, script_resource) -> void:
+	if not is_inside_tree():
+		ModLoaderLog.warning(
+			"BrotatoLocalTogether bootstrap: попытка создать %s вне scene tree." % node_name,
+			LOG_NAME
+		)
+		return
+
+	var root = get_tree().root
+	if root == null:
+		ModLoaderLog.warning(
+			"BrotatoLocalTogether bootstrap: root недоступен, не удалось создать %s." % node_name,
+			LOG_NAME
+		)
+		return
+
+	if root.get_node_or_null(node_name) != null:
+		ModLoaderLog.info(
+			"BrotatoLocalTogether bootstrap: нода %s уже существует." % node_name,
+			LOG_NAME
+		)
+		return
+
+	var instance = script_resource.new()
+	if instance == null:
+		ModLoaderLog.warning(
+			"BrotatoLocalTogether bootstrap: не удалось создать инстанс для %s." % node_name,
+			LOG_NAME
+		)
+		return
+
+	instance.set_name(node_name)
+	root.call_deferred("add_child", instance)
+	ModLoaderLog.info(
+		"BrotatoLocalTogether bootstrap: добавлена нода /root/%s." % node_name,
+		LOG_NAME
+	)
 
 
 func _initialize_safe_bootstrap() -> void:

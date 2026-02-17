@@ -21,7 +21,7 @@ var pending_force_focus = []
 
 
 func _ready():
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	
 	brotatogether_options = $"/root/BrotogetherOptions"
 	in_multiplayer_game = brotatogether_options.in_multiplayer_game
@@ -544,7 +544,7 @@ func _shop_item_for_string(shop_item_string : String, player_index : int) -> Sho
 
 func fill_shop_items(player_locked_items: Array, player_index: int, just_entered_shop: bool = false) -> void:
 	if $"/root/BrotogetherOptions".in_multiplayer_game:
-		if $"/root/SteamConnection".is_host():
+		if $"/root/NetworkConnection".is_host():
 			.fill_shop_items(player_locked_items, player_index, just_entered_shop)
 	else:
 		.fill_shop_items(player_locked_items, player_index, just_entered_shop)

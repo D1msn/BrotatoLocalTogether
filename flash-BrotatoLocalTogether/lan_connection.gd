@@ -912,13 +912,20 @@ func _is_session_bound_message(message_type: int) -> bool:
 func _send_rpc_packet(target_peer_id: int, message_type: int, compressed_data: PoolByteArray) -> void:
 	if target_peer_id <= 0:
 		return
-	var previous_channel = network_peer.transfer_channel
-	network_peer.transfer_channel = _transfer_channel_for_message(message_type)
+	var previous_channel = int(network_peer.transfer_channel)
+	if previous_channel <= 0:
+		previous_channel = 1
+	var transfer_channel = _transfer_channel_for_message(message_type)
+	if transfer_channel <= 0:
+		transfer_channel = 1
+	if transfer_channel != previous_channel:
+		network_peer.transfer_channel = transfer_channel
 	if _is_unreliable_message(message_type) and has_method("rpc_unreliable_id"):
 		rpc_unreliable_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
 	else:
 		rpc_id(target_peer_id, "_receive_enet_packet", message_type, compressed_data)
-	network_peer.transfer_channel = previous_channel
+	if int(network_peer.transfer_channel) != previous_channel:
+		network_peer.transfer_channel = previous_channel
 
 
 func _is_unreliable_message(message_type: int) -> bool:
@@ -966,7 +973,7 @@ func _transfer_channel_for_message(message_type: int) -> int:
 			return 1
 		MessageType.MESSAGE_TYPE_SHOP_INVENTORY_ITEM_FOCUS:
 			return 1
-	return 0
+	return 1
 
 
 func _send_lobby_sync() -> void:

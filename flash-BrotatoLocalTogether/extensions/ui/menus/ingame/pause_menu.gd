@@ -8,7 +8,7 @@ var is_multiplayer_lobby = false
 
 # Called when the node enters the scene tree for the first time.
 func _ready():
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 
 

@@ -7,7 +7,7 @@ var is_multiplayer_lobby = false
 
 
 func init_multiplayer() -> void:
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	brotatogether_options = $"/root/BrotogetherOptions"
 
 

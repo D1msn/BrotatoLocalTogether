@@ -9,7 +9,7 @@ var selection_by_string_key : Dictionary
 
 
 func _ready():
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	steam_connection.connect("difficulty_focused", self, "_difficulty_focused")
 	steam_connection.connect("difficulty_selected", self, "_difficulty_selected")
 	

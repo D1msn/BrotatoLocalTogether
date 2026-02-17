@@ -11,7 +11,7 @@ var external_focus = false
 var inventory_maps : Array
 
 func _ready():
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	
 	steam_connection.connect("player_focused_weapon", self, "_player_focused_weapon")
 	steam_connection.connect("player_selected_weapon", self, "_player_selected_weapon")

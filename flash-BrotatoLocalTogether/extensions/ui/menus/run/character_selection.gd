@@ -19,10 +19,12 @@ var selections_by_string_key : Dictionary
 
 var username_labels = []
 var external_focus = false
+var lobby_member_count_at_scene_init : int = -1
+var lobby_reload_pending : bool = false
 
 
 func _ready():
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	_connect_steam_signal("player_focused_character", "_player_focused_character")
 	_connect_steam_signal("player_selected_character", "_player_selected_character")
 	_connect_steam_signal("character_lobby_update", "_lobby_characters_updated")
@@ -66,6 +68,7 @@ func _ready():
 		username_labels.push_back(username_label_player_4)
 		
 		_update_username_labels()
+		lobby_member_count_at_scene_init = steam_connection.lobby_members.size()
 		
 		for member_index in steam_connection.lobby_members.size():
 			var member_id = steam_connection.lobby_members[member_index]
@@ -117,7 +120,30 @@ func _on_lobby_players_updated() -> void:
 		return
 	if not is_inside_tree():
 		return
+
+	var lobby_member_count = steam_connection.lobby_members.size()
+	if lobby_member_count_at_scene_init < 0:
+		lobby_member_count_at_scene_init = lobby_member_count
+
+	if lobby_member_count != lobby_member_count_at_scene_init:
+		lobby_member_count_at_scene_init = lobby_member_count
+		if lobby_member_count != RunData.get_player_count():
+			_request_reload_after_lobby_update()
+			return
+
 	_update_username_labels()
+
+
+func _request_reload_after_lobby_update() -> void:
+	if lobby_reload_pending:
+		return
+	lobby_reload_pending = true
+	call_deferred("_reload_after_lobby_update")
+
+
+func _reload_after_lobby_update() -> void:
+	lobby_reload_pending = false
+	reload_scene()
 
 
 func _update_username_labels() -> void:

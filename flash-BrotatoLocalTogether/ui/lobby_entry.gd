@@ -9,7 +9,7 @@ onready var lobby_name_label = $"%LobbyName"
 
 
 func _ready():
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	lobby_name_label.text = lobby_name
 
 

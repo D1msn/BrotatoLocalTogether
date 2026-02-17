@@ -19,7 +19,7 @@ var shown_lobbies : Dictionary = {}
 
 
 func _ready() -> void:
-	steam_connection = $"/root/SteamConnection"
+	steam_connection = $"/root/NetworkConnection"
 	steam_connection.connect("game_lobby_found", self, "_game_lobby_found")
 
 	brotatogether_options = $"/root/BrotogetherOptions"

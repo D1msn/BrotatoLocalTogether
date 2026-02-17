@@ -40,8 +40,11 @@ const TREE_SCENE = preload("res://entities/units/neutral/tree.tscn")
 const CLIENT_TURRET_STATS = preload("res://entities/structures/turret/turret_stats.tres")
 
 const ENABLE_DEBUG = true
+const CORE_LOG_NAME := "BrotatoLocalTogether:CoreMain"
 
 var debug_frame_counter : int = 0
+var safe_core_mode : bool = true
+var warning_once_map : Dictionary = {}
 
 # This is currently a half-completed attempt ot shrink some of the overhead
 # in messaging.  With a bit of testing, the gains weren't that great given 
@@ -86,27 +89,81 @@ enum ProjectileState {
 
 
 func _ready():
-	steam_connection = $"/root/SteamConnection"
-	brotatogether_options = $"/root/BrotogetherOptions"
-	in_multiplayer_game = brotatogether_options.in_multiplayer_game
+	steam_connection = get_node_or_null("/root/NetworkConnection")
+	if steam_connection == null:
+		_core_warn("Не найден /root/NetworkConnection, core-main отключен для текущей сцены.")
+		return
+
+	brotatogether_options = get_node_or_null("/root/BrotogetherOptions")
+	if brotatogether_options == null:
+		_core_warn("Не найден /root/BrotogetherOptions, используем значения по умолчанию.")
+		in_multiplayer_game = false
+		safe_core_mode = true
+	else:
+		in_multiplayer_game = bool(brotatogether_options.in_multiplayer_game)
+		safe_core_mode = bool(brotatogether_options.core_safe_mode)
 	
 	if in_multiplayer_game:
-		steam_connection.connect("client_status_received", self, "_client_status_received")
-		steam_connection.connect("host_starts_round", self, "_host_starts_round")
-		steam_connection.connect("state_update", self, "_state_update")
-		steam_connection.connect("client_position", self, "_update_player_position")
-		steam_connection.connect("client_menu_focus", self, "_update_client_focus")
+		_connect_network_signal("client_status_received", "_client_status_received")
+		_connect_network_signal("host_starts_round", "_host_starts_round")
+		_connect_network_signal("state_update", "_state_update")
+		_connect_network_signal("client_position", "_update_player_position")
+		_connect_network_signal("client_menu_focus", "_update_client_focus")
 		
-		steam_connection.connect("client_main_scene_reroll_button_pressed", self, "_client_reroll_button_pressed")
-		steam_connection.connect("client_main_scene_choose_upgrade_pressed", self, "_client_choose_upgrade_button_pressed")
-		steam_connection.connect("client_main_scene_take_button_pressed", self, "_client_take_button_pressed")
-		steam_connection.connect("client_main_scene_discard_button_pressed", self, "_client_discard_button_pressed")
+		_connect_network_signal("client_main_scene_reroll_button_pressed", "_client_reroll_button_pressed")
+		_connect_network_signal("client_main_scene_choose_upgrade_pressed", "_client_choose_upgrade_button_pressed")
+		_connect_network_signal("client_main_scene_take_button_pressed", "_client_take_button_pressed")
+		_connect_network_signal("client_main_scene_discard_button_pressed", "_client_discard_button_pressed")
 		
-		steam_connection.connect("host_entered_shop", self, "_host_entered_shop")
+		_connect_network_signal("host_entered_shop", "_host_entered_shop")
 		
 		my_player_index = steam_connection.get_my_index()
+		_core_info("core-main активен, safe_core_mode=%s, is_host=%s" % [str(safe_core_mode), str(steam_connection.is_host())])
 		
 		call_deferred("multiplayer_ready")
+
+
+func _connect_network_signal(signal_name: String, method_name: String) -> void:
+	if steam_connection == null:
+		return
+	if steam_connection.is_connected(signal_name, self, method_name):
+		return
+	var connect_result = steam_connection.connect(signal_name, self, method_name)
+	if connect_result != OK:
+		_core_warn("Не удалось подключить сигнал %s -> %s (код %s)." % [signal_name, method_name, str(connect_result)])
+
+
+func _core_info(message: String) -> void:
+	ModLoaderLog.info(message, CORE_LOG_NAME)
+
+
+func _core_warn(message: String) -> void:
+	ModLoaderLog.warning(message, CORE_LOG_NAME)
+
+
+func _core_warn_once(key: String, message: String) -> void:
+	if warning_once_map.has(key):
+		return
+	warning_once_map[key] = true
+	_core_warn(message)
+
+
+func _state_array(state_dict: Dictionary, key: String) -> Array:
+	var value = state_dict.get(key, [])
+	if value is Array:
+		return value
+	if value is Dictionary:
+		return value.keys()
+	_core_warn_once("state_bad_type_" + key, "Некорректный тип state[%s], ожидается Array." % key)
+	return []
+
+
+func _state_dict(state_dict: Dictionary, key: String) -> Dictionary:
+	var value = state_dict.get(key, {})
+	if value is Dictionary:
+		return value
+	_core_warn_once("state_bad_type_" + key, "Некорректный тип state[%s], ожидается Dictionary." % key)
+	return {}
 
 
 func _physics_process(delta : float):
@@ -139,6 +196,14 @@ func _process(_delta):
 
 
 func _send_game_state() -> void:
+	if steam_connection == null:
+		_core_warn_once("send_state_no_connection", "Пропущена отправка state: нет подключения.")
+		return
+
+	if brotatogether_options == null:
+		_core_warn_once("send_state_no_options", "Пропущена отправка state: нет BrotogetherOptions.")
+		return
+
 	var state_dict = {}
 	
 	state_dict["WAVE_TIME"] = _wave_timer.time_left
@@ -149,51 +214,83 @@ func _send_game_state() -> void:
 		var player = _players[player_index]
 		players.push_back(_dictionary_for_player(player, player_index))
 	state_dict["PLAYERS"] = players
-	
-	var enemies = []
-	for enemy in _entity_spawner.enemies:
-		if is_instance_valid(enemy):
-			enemies.push_back(_dictionary_for_enemy(enemy))
-	state_dict["ENEMIES"] = enemies
-	
-	var bosses = []
-	for boss in _entity_spawner.bosses:
-		if is_instance_valid(boss):
-			bosses.push_back(_dictionary_for_enemy(boss))
-	state_dict["BOSSES"] = bosses
-	
-	state_dict["BATCHED_ENEMY_DEATHS"] = brotatogether_options.batched_enemy_deaths.duplicate()
-	brotatogether_options.batched_enemy_deaths.clear()
-	
-	state_dict["BATCHED_HIT_EFFECTS"] = brotatogether_options.batched_hit_effects.duplicate()
-	brotatogether_options.batched_hit_effects.clear()
-	
-	state_dict["BATCHED_HIT_PARTICLES"] = brotatogether_options.batched_hit_particles.duplicate()
-	brotatogether_options.batched_hit_particles.clear()
-	
-	state_dict["BATCHED_FLOATING_TEXT"] = brotatogether_options.batched_floating_text.duplicate()
-	brotatogether_options.batched_floating_text.clear()
-	
-	state_dict["BATCHED_UNIT_FLASHES"] = brotatogether_options.batched_unit_flashes.duplicate()
-	brotatogether_options.batched_unit_flashes.clear()
-	
-	state_dict["BATCHED_2D_SOUNDS"] = brotatogether_options.batched_2d_sounds.duplicate()
-	brotatogether_options.batched_2d_sounds.clear()
-	
-	state_dict["BATCHED_SOUNDS"] = brotatogether_options.batched_sounds.duplicate()
-	brotatogether_options.batched_sounds.clear()
-	
-	state_dict["BATCHED_EXPLOSIONS"] = brotatogether_options.batched_explosions.duplicate()
-	brotatogether_options.batched_explosions.clear()
-	
-	state_dict["BIRTHS"] = _host_births_array()
-	state_dict["PLAYER_PROJECTILES"] = _host_player_projectiles_array()
-	state_dict["ITEMS"] = _host_items_array()
-	state_dict["CONSUMABLES"] = _host_consumables_array()
-	state_dict["NEUTRALS"] = _host_neutrals_array()
-	state_dict["STRUCTURES"] = _host_structures_array()
-	state_dict["ENEMY_PROJECTILES"] = _host_enemy_projectiles_array()
-	state_dict["UPGRADE_MENU_STATUS"] = _host_menu_status()
+
+	if safe_core_mode:
+		state_dict["ENEMIES"] = []
+		state_dict["BOSSES"] = []
+		state_dict["BATCHED_ENEMY_DEATHS"] = []
+		state_dict["BATCHED_HIT_EFFECTS"] = []
+		state_dict["BATCHED_HIT_PARTICLES"] = []
+		state_dict["BATCHED_FLOATING_TEXT"] = []
+		state_dict["BATCHED_UNIT_FLASHES"] = []
+		state_dict["BATCHED_2D_SOUNDS"] = []
+		state_dict["BATCHED_SOUNDS"] = []
+		state_dict["BATCHED_EXPLOSIONS"] = []
+		state_dict["BIRTHS"] = []
+		state_dict["PLAYER_PROJECTILES"] = []
+		state_dict["ITEMS"] = []
+		state_dict["CONSUMABLES"] = []
+		state_dict["NEUTRALS"] = []
+		state_dict["STRUCTURES"] = []
+		state_dict["ENEMY_PROJECTILES"] = []
+		state_dict["UPGRADE_MENU_STATUS"] = {
+			"MENU_VISIBLE": false,
+			"PLAYER_MENUS": [],
+		}
+
+		brotatogether_options.batched_enemy_deaths.clear()
+		brotatogether_options.batched_hit_effects.clear()
+		brotatogether_options.batched_hit_particles.clear()
+		brotatogether_options.batched_floating_text.clear()
+		brotatogether_options.batched_unit_flashes.clear()
+		brotatogether_options.batched_2d_sounds.clear()
+		brotatogether_options.batched_sounds.clear()
+		brotatogether_options.batched_explosions.clear()
+	else:
+		var enemies = []
+		for enemy in _entity_spawner.enemies:
+			if is_instance_valid(enemy):
+				enemies.push_back(_dictionary_for_enemy(enemy))
+		state_dict["ENEMIES"] = enemies
+		
+		var bosses = []
+		for boss in _entity_spawner.bosses:
+			if is_instance_valid(boss):
+				bosses.push_back(_dictionary_for_enemy(boss))
+		state_dict["BOSSES"] = bosses
+		
+		state_dict["BATCHED_ENEMY_DEATHS"] = brotatogether_options.batched_enemy_deaths.duplicate()
+		brotatogether_options.batched_enemy_deaths.clear()
+		
+		state_dict["BATCHED_HIT_EFFECTS"] = brotatogether_options.batched_hit_effects.duplicate()
+		brotatogether_options.batched_hit_effects.clear()
+		
+		state_dict["BATCHED_HIT_PARTICLES"] = brotatogether_options.batched_hit_particles.duplicate()
+		brotatogether_options.batched_hit_particles.clear()
+		
+		state_dict["BATCHED_FLOATING_TEXT"] = brotatogether_options.batched_floating_text.duplicate()
+		brotatogether_options.batched_floating_text.clear()
+		
+		state_dict["BATCHED_UNIT_FLASHES"] = brotatogether_options.batched_unit_flashes.duplicate()
+		brotatogether_options.batched_unit_flashes.clear()
+		
+		state_dict["BATCHED_2D_SOUNDS"] = brotatogether_options.batched_2d_sounds.duplicate()
+		brotatogether_options.batched_2d_sounds.clear()
+		
+		state_dict["BATCHED_SOUNDS"] = brotatogether_options.batched_sounds.duplicate()
+		brotatogether_options.batched_sounds.clear()
+		
+		state_dict["BATCHED_EXPLOSIONS"] = brotatogether_options.batched_explosions.duplicate()
+		brotatogether_options.batched_explosions.clear()
+		
+		state_dict["BIRTHS"] = _host_births_array()
+		state_dict["PLAYER_PROJECTILES"] = _host_player_projectiles_array()
+		state_dict["ITEMS"] = _host_items_array()
+		state_dict["CONSUMABLES"] = _host_consumables_array()
+		state_dict["NEUTRALS"] = _host_neutrals_array()
+		state_dict["STRUCTURES"] = _host_structures_array()
+		state_dict["ENEMY_PROJECTILES"] = _host_enemy_projectiles_array()
+		state_dict["UPGRADE_MENU_STATUS"] = _host_menu_status()
 	
 	if ENABLE_DEBUG:
 		var size_by_key = {}
@@ -210,18 +307,21 @@ func _send_game_state() -> void:
 
 
 func _state_update(state_dict : Dictionary) -> void:	
+	if not (state_dict is Dictionary):
+		_core_warn_once("state_not_dictionary", "Получен state не-словарь, пакет пропущен.")
+		return
+
 	var start_time : int = Time.get_ticks_usec()
 	var before : int
-#	print_debug("received state ", state_dict)
 	
 	before = Time.get_ticks_usec()
-	var wait_time = float(state_dict["WAVE_TIME"])
+	var wait_time = float(state_dict.get("WAVE_TIME", 0.0))
 	if wait_time > 0:
 		_wave_timer.start(wait_time)
 	var wave_timer_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	var bonus_gold = state_dict["BONUS_GOLD"]
+	var bonus_gold = int(state_dict.get("BONUS_GOLD", 0))
 	if bonus_gold > 0:
 		_ui_bonus_gold.show()
 	RunData.bonus_gold = bonus_gold
@@ -230,25 +330,43 @@ func _state_update(state_dict : Dictionary) -> void:
 	var bonus_gold_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	var players_array = state_dict["PLAYERS"]
+	var players_array = _state_array(state_dict, "PLAYERS")
 	for player_index in players_array.size():
-		_update_player_position(players_array[player_index], player_index)
+		var player_dict = players_array[player_index]
+		if player_dict is Dictionary:
+			_update_player_position(player_dict, player_index)
 	var player_update_time = Time.get_ticks_usec() - before
+
+	if safe_core_mode:
+		if ENABLE_DEBUG:
+			var safe_end_time : int = Time.get_ticks_usec()
+			var safe_elapsed_time = safe_end_time - start_time
+			debug_frame_counter += 1
+			if debug_frame_counter % 100 == 0 || safe_elapsed_time > 1000:
+				print_debug("safe-core state update time: ", safe_elapsed_time)
+				print_debug(
+					"Wave Timer: ", wave_timer_update_time,
+					" --- Bonus Gold: ", bonus_gold_update_time,
+					" --- Players: ", player_update_time
+				)
+		return
 	
 	before = Time.get_ticks_usec()
-	var enemies_array = state_dict["ENEMIES"]
+	var enemies_array = _state_array(state_dict, "ENEMIES")
 	for enemy in enemies_array:
-		_update_enemy(enemy)
+		if enemy is Dictionary:
+			_update_enemy(enemy)
 	var enemies_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	var bosses_array = state_dict["BOSSES"]
+	var bosses_array = _state_array(state_dict, "BOSSES")
 	for boss in bosses_array:
-		_update_enemy(boss)
+		if boss is Dictionary:
+			_update_enemy(boss)
 	var bosses_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	for enemy_id in state_dict["BATCHED_ENEMY_DEATHS"]:
+	for enemy_id in _state_array(state_dict, "BATCHED_ENEMY_DEATHS"):
 		if client_enemies.has(enemy_id):
 			if not client_enemies[enemy_id].dead:
 				client_enemies[enemy_id].die()
@@ -256,7 +374,7 @@ func _state_update(state_dict : Dictionary) -> void:
 	var enemy_deaths_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	for flashing_unit_id in state_dict["BATCHED_UNIT_FLASHES"]:
+	for flashing_unit_id in _state_array(state_dict, "BATCHED_UNIT_FLASHES"):
 		var flashing_unit
 		if client_enemies.has(flashing_unit_id):
 			flashing_unit = client_enemies[flashing_unit_id]
@@ -269,62 +387,74 @@ func _state_update(state_dict : Dictionary) -> void:
 	var flashing_units_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	for explosion in state_dict["BATCHED_EXPLOSIONS"]:
-		call_deferred("spawn_explosion", explosion)
+	for explosion in _state_array(state_dict, "BATCHED_EXPLOSIONS"):
+		if explosion is Dictionary:
+			call_deferred("spawn_explosion", explosion)
 	var explosion_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_player_projectiles(state_dict["PLAYER_PROJECTILES"])
+	_update_player_projectiles(_state_array(state_dict, "PLAYER_PROJECTILES"))
 	var player_projectiles_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	call_deferred("_update_births", state_dict["BIRTHS"])
+	call_deferred("_update_births", _state_array(state_dict, "BIRTHS"))
 	var births_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_items(state_dict["ITEMS"])
+	_update_items(_state_array(state_dict, "ITEMS"))
 	var items_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_consumables(state_dict["CONSUMABLES"])
+	_update_consumables(_state_array(state_dict, "CONSUMABLES"))
 	var consumables_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_neutrals(state_dict["NEUTRALS"])
+	_update_neutrals(_state_array(state_dict, "NEUTRALS"))
 	var neutrals_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_structures(state_dict["STRUCTURES"])
+	_update_structures(_state_array(state_dict, "STRUCTURES"))
 	var structures_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_enemy_projectiles(state_dict["ENEMY_PROJECTILES"])
+	_update_enemy_projectiles(_state_array(state_dict, "ENEMY_PROJECTILES"))
 	var enemy_projectiles_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_batched_hit_effects(state_dict["BATCHED_HIT_EFFECTS"])
+	_update_batched_hit_effects(_state_array(state_dict, "BATCHED_HIT_EFFECTS"))
 	var enemy_hit_effects_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_batched_hit_particles(state_dict["BATCHED_HIT_PARTICLES"])
+	_update_batched_hit_particles(_state_array(state_dict, "BATCHED_HIT_PARTICLES"))
 	var enemy_hit_particles_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_batched_floating_text(state_dict["BATCHED_FLOATING_TEXT"])
+	_update_batched_floating_text(_state_array(state_dict, "BATCHED_FLOATING_TEXT"))
 	var floating_text_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	for sound in state_dict["BATCHED_SOUNDS"]:
-		SoundManager.call_deferred("play", load(sound["RESOURCE_PATH"]))
+	for sound in _state_array(state_dict, "BATCHED_SOUNDS"):
+		if sound is Dictionary and sound.has("RESOURCE_PATH"):
+			SoundManager.call_deferred("play", load(String(sound["RESOURCE_PATH"])))
 	var sound_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	for sound in state_dict["BATCHED_2D_SOUNDS"]:
-		SoundManager2D.call_deferred("play", load(sound["RESOURCE_PATH"]), Vector2(sound["X_POS"], sound["Y_POS"]))
+	for sound in _state_array(state_dict, "BATCHED_2D_SOUNDS"):
+		if sound is Dictionary and sound.has("RESOURCE_PATH") and sound.has("X_POS") and sound.has("Y_POS"):
+			SoundManager2D.call_deferred(
+				"play",
+				load(String(sound["RESOURCE_PATH"])),
+				Vector2(sound["X_POS"], sound["Y_POS"])
+			)
 	var sound_2d_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
-	_update_menu(state_dict["UPGRADE_MENU_STATUS"])
+	var menu_state = _state_dict(state_dict, "UPGRADE_MENU_STATUS")
+	if not menu_state.has("MENU_VISIBLE"):
+		menu_state["MENU_VISIBLE"] = false
+	if not menu_state.has("PLAYER_MENUS"):
+		menu_state["PLAYER_MENUS"] = []
+	_update_menu(menu_state)
 	var menu_update_time = Time.get_ticks_usec() - before
 	
 	if ENABLE_DEBUG:
@@ -370,6 +500,13 @@ func _input(event) -> void:
 
 
 func _send_client_position() -> void:
+	if my_player_index == null or my_player_index < 0 or my_player_index >= _players.size():
+		_core_warn_once(
+			"send_client_position_bad_index",
+			"Пропущена отправка client_position: некорректный my_player_index=%s." % str(my_player_index)
+		)
+		return
+
 	var in_postwave_menu = _coop_upgrades_ui.visible
 	if in_postwave_menu:
 		var player_container = _coop_upgrades_ui._get_player_container(my_player_index)
@@ -426,6 +563,20 @@ func _dictionary_for_player(player, player_index) -> Dictionary:
 
 
 func _update_player_position(player_dict : Dictionary, player_index : int) -> void:
+	if player_index < 0 or player_index >= _players.size():
+		_core_warn_once(
+			"update_player_position_out_of_range_%s" % str(player_index),
+			"Пропущено обновление позиции: player_index=%s вне диапазона _players.size=%s."
+			% [str(player_index), str(_players.size())]
+		)
+		return
+	if not (player_dict is Dictionary):
+		_core_warn_once("update_player_position_payload_type", "Пропущено обновление позиции: payload не словарь.")
+		return
+	if not player_dict.has(EntityState.ENTITY_STATE_NETWORK_ID):
+		_core_warn_once("update_player_position_no_network_id", "Пропущено обновление позиции: отсутствует NETWORK_ID.")
+		return
+
 	var player = _players[player_index]
 	var network_id = player_dict[EntityState.ENTITY_STATE_NETWORK_ID]
 	

@@ -29,18 +29,15 @@ static func get_group_load_order() -> Array:
 
 
 static func get_forced_disabled_groups() -> Array:
-	# На текущей версии Brotato этот extension стабильно вызывает native crash.
-	return [GROUP_CORE_MAIN]
+	# core_main включен: safe-core поведение настраивается внутри extensions/main.gd.
+	return []
 
 
 static func get_forced_disabled_extension_paths(ext_dir: String) -> Array:
-	# turret extension провоцирует загрузку отсутствующего
-	# res://tests/partial_doubles/pd_turret.gd на актуальной версии игры.
 	# FocusEmulator extension также конфликтует с текущей версией игры:
 	# появляются дубли сигналов и ошибки работы вне tree.
-	# Отключаем оба path до отдельной адаптации.
+	# Отключаем только его, turret включён для проверки.
 	return [
-		ext_dir + "entities/structures/turret/turret.gd",
 		ext_dir + "ui/menus/global/focus_emulator.gd",
 	]
 
