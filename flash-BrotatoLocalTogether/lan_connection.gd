@@ -1558,15 +1558,15 @@ func _send_rpc_packet(target_peer_id: int, message_type: int, packet_data: PoolB
 		return
 
 	var previous_channel = int(network_peer.transfer_channel)
-	if previous_channel <= 0:
-		previous_channel = 1
+	if previous_channel < 0:
+		previous_channel = 0
 	var previous_mode = int(network_peer.transfer_mode)
 	if previous_mode < 0:
 		previous_mode = NetworkedMultiplayerPeer.TRANSFER_MODE_RELIABLE
 
 	var transfer_channel = _transfer_channel_for_message(message_type)
-	if transfer_channel <= 0:
-		transfer_channel = 1
+	if transfer_channel < 0:
+		transfer_channel = 0
 
 	var is_unreliable = _is_unreliable_message(message_type)
 	var is_reliable = _is_reliable_message(message_type)
@@ -1685,22 +1685,10 @@ func _is_reliable_message(message_type: int) -> bool:
 
 
 func _transfer_channel_for_message(message_type: int) -> int:
-	match message_type:
-		MessageType.MESSAGE_TYPE_MAIN_STATE:
-			return 2
-		MessageType.MESSAGE_TYPE_CLIENT_POSITION:
-			return 2
-		MessageType.MESSAGE_TYPE_CLIENT_FOCUS_MAIN_SCENE:
-			return 2
-		MessageType.MESSAGE_TYPE_CHARACTER_FOCUS:
-			return 1
-		MessageType.MESSAGE_TYPE_WEAPON_FOCUS:
-			return 1
-		MessageType.MESSAGE_TYPE_SHOP_ITEM_FOCUS:
-			return 1
-		MessageType.MESSAGE_TYPE_SHOP_INVENTORY_ITEM_FOCUS:
-			return 1
-	return 1
+	# Для совместимости RPC в текущей сборке держим единый ENet-канал.
+	# Надёжность разделяем через transfer_mode (reliable/unreliable).
+	var _unused_message_type = message_type
+	return 0
 
 
 func _send_lobby_sync() -> void:
