@@ -2,11 +2,9 @@ extends "res://ui/menus/run/character_selection.gd"
 
 const UsernameLabel = preload("res://mods-unpacked/flash-BrotatoLocalTogether/ui/username_label.tscn")
 const SignalUtils = preload("res://mods-unpacked/flash-BrotatoLocalTogether/signal_utils.gd")
+const DiagnosticsLogger = preload("res://mods-unpacked/flash-BrotatoLocalTogether/logging/diagnostics_logger.gd")
 
 const MULTIPLAYER_CLIENT_PLAYER_TYPE = 10
-const DIAG_DIR := "user://brotato_local_together"
-const DIAG_LOG_PATH := DIAG_DIR + "/diagnostics.log"
-
 var network_connection
 var brotatogether_options
 
@@ -73,8 +71,8 @@ func _ready():
 		var run_options_top_panel = _run_options_panel.get_node("MarginContainer/VBoxContainer/HBoxContainer")
 		var run_options_icon = run_options_top_panel.get_node_or_null("Icon")
 		if run_options_icon != null:
-			run_options_top_panel.remove_child(run_options_icon)
-			run_options_icon.queue_free()
+			# В _ready() родитель может быть в blocked-состоянии; удаляем безопасно.
+			run_options_icon.call_deferred("queue_free")
 		
 		var username_label_player_1 : Label = UsernameLabel.instance()
 		$"MarginContainer/VBoxContainer/DescriptionContainer/HBoxContainer/Panel1/vboxContainer".add_child(username_label_player_1)
@@ -450,41 +448,6 @@ func _on_CoopButton_focus_entered():
 
 
 func _diag(message: String) -> void:
-	if brotatogether_options != null:
-		var enabled_value = brotatogether_options.get("diagnostics_log_enabled")
-		if typeof(enabled_value) == TYPE_BOOL and not enabled_value:
-			return
-
-	var dir := Directory.new()
-	if dir.open("user://") != OK:
-		return
-	if not dir.dir_exists("brotato_local_together"):
-		var _make_result = dir.make_dir("brotato_local_together")
-
-	var dt = OS.get_datetime()
-	var ts = "%04d-%02d-%02d %02d:%02d:%02d" % [
-		int(dt.year),
-		int(dt.month),
-		int(dt.day),
-		int(dt.hour),
-		int(dt.minute),
-		int(dt.second),
-	]
-	var line = "[%s] CharacterSelectionExt: %s" % [ts, message]
-
-	var file := File.new()
-	var open_result = file.open(DIAG_LOG_PATH, File.READ_WRITE)
-	if open_result != OK:
-		open_result = file.open(DIAG_LOG_PATH, File.WRITE)
-		if open_result != OK:
-			return
-		print("BrotatoLocalTogether diagnostics path: " + ProjectSettings.globalize_path(DIAG_LOG_PATH))
-		file.store_line(line)
-		file.close()
-		return
-
-	file.seek_end()
-	file.store_line(line)
-	file.close()
+	DiagnosticsLogger.log_debug_with_options(brotatogether_options, "CharacterSelectionExt", message)
 
 

@@ -118,5 +118,8 @@ func _ready_base_safe() -> void:
 
 func _diag(message: String) -> void:
 	var logger_script = load("res://mods-unpacked/flash-BrotatoLocalTogether/logging/diagnostics_logger.gd")
-	if logger_script != null and logger_script.has_method("log_with_options"):
-		logger_script.log_with_options(brotatogether_options, "FocusEmulatorExt", message)
+	if logger_script != null:
+		if logger_script.has_method("log_debug_with_options"):
+			logger_script.log_debug_with_options(brotatogether_options, "FocusEmulatorExt", message)
+		elif logger_script.has_method("log_with_options"):
+			logger_script.log_with_options(brotatogether_options, "FocusEmulatorExt", message)

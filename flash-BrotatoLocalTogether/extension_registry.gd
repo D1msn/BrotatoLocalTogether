@@ -56,6 +56,7 @@ static func get_groups(ext_dir: String) -> Dictionary:
 		],
 		GROUP_GAMEPLAY_ENTITIES: [
 			_make_entry(ext_dir + "entities/units/unit/unit.gd", "res://entities/units/unit/unit.gd"),
+			_make_entry(ext_dir + "entities/units/player/player.gd", "res://entities/units/player/player.gd"),
 			_make_entry(ext_dir + "entities/structures/turret/turret.gd", "res://entities/structures/turret/turret.gd"),
 			_make_entry(ext_dir + "entities/entity.gd", "res://entities/entity.gd"),
 			_make_entry(ext_dir + "entities/birth/entity_birth.gd", "res://entities/birth/entity_birth.gd"),

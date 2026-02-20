@@ -14,10 +14,14 @@ const NETWORK_CONFIG_SECTION := "network"
 const DEFAULT_HOST_PORT := 24567
 const DEFAULT_SAFE_CORE_MODE := true
 const DEFAULT_DIAGNOSTICS_LOG_ENABLED := true
+const DEFAULT_DIAGNOSTICS_LOG_LEVEL := "DEBUG"
+const DEFAULT_DIAGNOSTICS_LOG_ECHO_STDOUT := true
 
 var host_port : int = DEFAULT_HOST_PORT
 var core_safe_mode : bool = DEFAULT_SAFE_CORE_MODE
 var diagnostics_log_enabled : bool = DEFAULT_DIAGNOSTICS_LOG_ENABLED
+var diagnostics_log_level : String = DEFAULT_DIAGNOSTICS_LOG_LEVEL
+var diagnostics_log_echo_stdout : bool = DEFAULT_DIAGNOSTICS_LOG_ECHO_STDOUT
 var preferred_advertise_ip : String = ""
 var last_join_endpoint : String = ""
 var local_username : String = ""
@@ -83,6 +87,16 @@ func set_diagnostics_log_enabled(value: bool) -> void:
 	_save_network_config()
 
 
+func set_diagnostics_log_level(value: String) -> void:
+	diagnostics_log_level = _normalize_log_level(value)
+	_save_network_config()
+
+
+func set_diagnostics_log_echo_stdout(value: bool) -> void:
+	diagnostics_log_echo_stdout = value
+	_save_network_config()
+
+
 func set_session_credentials(session_id: String, player_token: String, host_endpoint: String) -> void:
 	last_session_id = session_id.strip_edges()
 	last_player_token = player_token.strip_edges()
@@ -109,6 +123,8 @@ func _load_network_config() -> void:
 	host_port = clamp(host_port, 1024, 65535)
 	core_safe_mode = bool(config.get_value(NETWORK_CONFIG_SECTION, "core_safe_mode", DEFAULT_SAFE_CORE_MODE))
 	diagnostics_log_enabled = bool(config.get_value(NETWORK_CONFIG_SECTION, "diagnostics_log_enabled", DEFAULT_DIAGNOSTICS_LOG_ENABLED))
+	diagnostics_log_level = _normalize_log_level(String(config.get_value(NETWORK_CONFIG_SECTION, "diagnostics_log_level", DEFAULT_DIAGNOSTICS_LOG_LEVEL)))
+	diagnostics_log_echo_stdout = bool(config.get_value(NETWORK_CONFIG_SECTION, "diagnostics_log_echo_stdout", DEFAULT_DIAGNOSTICS_LOG_ECHO_STDOUT))
 
 	preferred_advertise_ip = String(config.get_value(NETWORK_CONFIG_SECTION, "preferred_advertise_ip", ""))
 	last_join_endpoint = String(config.get_value(NETWORK_CONFIG_SECTION, "last_join_endpoint", ""))
@@ -124,6 +140,8 @@ func _save_network_config() -> void:
 	config.set_value(NETWORK_CONFIG_SECTION, "host_port", host_port)
 	config.set_value(NETWORK_CONFIG_SECTION, "core_safe_mode", core_safe_mode)
 	config.set_value(NETWORK_CONFIG_SECTION, "diagnostics_log_enabled", diagnostics_log_enabled)
+	config.set_value(NETWORK_CONFIG_SECTION, "diagnostics_log_level", diagnostics_log_level)
+	config.set_value(NETWORK_CONFIG_SECTION, "diagnostics_log_echo_stdout", diagnostics_log_echo_stdout)
 	config.set_value(NETWORK_CONFIG_SECTION, "preferred_advertise_ip", preferred_advertise_ip)
 	config.set_value(NETWORK_CONFIG_SECTION, "last_join_endpoint", last_join_endpoint)
 	config.set_value(NETWORK_CONFIG_SECTION, "local_username", local_username)
@@ -139,3 +157,10 @@ func _save_network_config() -> void:
 		var _make_result = base_dir.make_dir(BASE_DIR)
 
 	var _save_result = config.save(NETWORK_CONFIG_PATH)
+
+
+func _normalize_log_level(value: String) -> String:
+	var normalized_level = String(value).strip_edges().to_upper()
+	if normalized_level != "DEBUG" and normalized_level != "INFO" and normalized_level != "WARN" and normalized_level != "ERROR":
+		return DEFAULT_DIAGNOSTICS_LOG_LEVEL
+	return normalized_level

@@ -789,11 +789,23 @@ func _update_player_position(player_dict : Dictionary, player_index : int) -> vo
 				"Пропущено обновление позиции: отсутствуют координаты X/Y для player_index=%s." % str(player_index)
 			)
 			return
-		player.call_deferred("update_external_player_position", player_dict)
+		if player.has_method("update_external_player_position"):
+			player.call_deferred("update_external_player_position", player_dict)
+		else:
+			_core_warn_once(
+				"player_missing_update_external_player_position",
+				"У player отсутствует метод update_external_player_position; пропуск remote position update."
+			)
 	
 	if not network_connection.is_host():
 		_players_ui[player_index].call_deferred("update_level_label")
-		player.call_deferred("update_client_player", player_dict, player_index)
+		if player.has_method("update_client_player"):
+			player.call_deferred("update_client_player", player_dict, player_index)
+		else:
+			_core_warn_once(
+				"player_missing_update_client_player",
+				"У player отсутствует метод update_client_player; пропуск client stats update."
+			)
 		
 		var things_to_process = _things_to_process_player_containers[player_index]
 		if player_dict[EntityState.ENTITY_STATE_PLAYER_NUM_UPGRADES] > things_to_process.upgrades._elements.size():
@@ -867,8 +879,9 @@ func spawn_enemy(enemy_dict) -> void:
 	
 	var movement_behavior = enemy.get_node_or_null("MovementBehavior")
 	if movement_behavior != null:
-		enemy.remove_child(movement_behavior)
-		movement_behavior.queue_free()
+		movement_behavior.set_name("MovementBehavior_Old")
+		enemy.call_deferred("remove_child", movement_behavior)
+		movement_behavior.call_deferred("queue_free")
 		var client_movement_behavior = ClientMovementBehavior.new()
 		client_movement_behavior.set_name("MovementBehavior")
 		enemy.add_child(client_movement_behavior, true)
@@ -881,8 +894,9 @@ func spawn_enemy(enemy_dict) -> void:
 	
 	var attack_behavior = enemy.get_node_or_null("AttackBehavior")
 	if attack_behavior != null:
-		enemy.remove_child(attack_behavior)
-		attack_behavior.queue_free()
+		attack_behavior.set_name("AttackBehavior_Old")
+		enemy.call_deferred("remove_child", attack_behavior)
+		attack_behavior.call_deferred("queue_free")
 		var client_attack_behavior = ClientAttackBehavior.new()
 		client_attack_behavior.set_name("AttackBehavior")
 		enemy.add_child(client_attack_behavior, true)

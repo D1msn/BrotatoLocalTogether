@@ -43,6 +43,7 @@ const SCENE_TRANSITION_KEY_STARTED_AT_MSEC := "STARTED_AT_MSEC"
 const SCENE_TRANSITION_KEY_TIMEOUT_MSEC := "TIMEOUT_MSEC"
 const SCENE_TRANSITION_KEY_READY_SCENE := "READY_SCENE"
 const SCENE_TRANSITION_KEY_READY_AT_MSEC := "READY_AT_MSEC"
+const MIN_ENET_TRANSFER_CHANNEL := 1
 
 var network_peer : NetworkedMultiplayerENet = null
 var session_persistence : Node = null
@@ -79,6 +80,7 @@ var scene_transition_last_prepare_sent_msec : int = 0
 var scene_transition_last_ready_sent_msec : int = 0
 var scene_transition_prepare_sender_id : int = -1
 var scene_transition_ready_by_peer : Dictionary = {}
+var _shutdown_cleanup_done := false
 
 signal session_resume_available(session_id, expires_at_unix)
 signal session_resumed(session_id, player_slot)
@@ -86,6 +88,7 @@ signal session_resume_failed(reason_code, reason_text)
 
 
 func _ready() -> void:
+	_sync_logger_session_tag("")
 	steam_id = -1
 	game_lobby_id = -1
 	game_lobby_owner_id = -1
@@ -137,6 +140,57 @@ func _physics_process(_delta : float) -> void:
 func _notification(what: int) -> void:
 	if what == MainLoop.NOTIFICATION_WM_QUIT_REQUEST or what == NOTIFICATION_PREDELETE:
 		_flush_snapshot(true)
+		_cleanup_runtime_state()
+
+
+func _exit_tree() -> void:
+	_cleanup_runtime_state()
+
+
+func _cleanup_runtime_state() -> void:
+	if _shutdown_cleanup_done:
+		return
+	_shutdown_cleanup_done = true
+
+	var tree = null
+	if is_inside_tree():
+		tree = get_tree()
+	if tree != null:
+		if tree.is_connected("network_peer_connected", self, "_on_network_peer_connected"):
+			tree.disconnect("network_peer_connected", self, "_on_network_peer_connected")
+		if tree.is_connected("network_peer_disconnected", self, "_on_network_peer_disconnected"):
+			tree.disconnect("network_peer_disconnected", self, "_on_network_peer_disconnected")
+		if tree.is_connected("connected_to_server", self, "_on_connected_to_server"):
+			tree.disconnect("connected_to_server", self, "_on_connected_to_server")
+		if tree.is_connected("connection_failed", self, "_on_connection_failed"):
+			tree.disconnect("connection_failed", self, "_on_connection_failed")
+		if tree.is_connected("server_disconnected", self, "_on_server_disconnected"):
+			tree.disconnect("server_disconnected", self, "_on_server_disconnected")
+
+	if ping_timer != null and is_instance_valid(ping_timer):
+		if ping_timer.is_connected("timeout", self, "_ping_timer_timeout"):
+			ping_timer.disconnect("timeout", self, "_ping_timer_timeout")
+		ping_timer.stop()
+		ping_timer.free()
+	ping_timer = null
+
+	if _protocol_mismatch_dialog != null and is_instance_valid(_protocol_mismatch_dialog):
+		_protocol_mismatch_dialog.free()
+	_protocol_mismatch_dialog = null
+
+	_teardown_network_peer()
+
+
+func _teardown_network_peer() -> void:
+	var tree = null
+	if is_inside_tree():
+		tree = get_tree()
+	if tree != null and tree.has_network_peer():
+		tree.set_network_peer(null)
+
+	if network_peer != null:
+		network_peer.close_connection()
+		network_peer = null
 
 
 func create_lan_session(host_port: int = -1, restore_snapshot: Dictionary = {}) -> void:
@@ -146,6 +200,7 @@ func create_lan_session(host_port: int = -1, restore_snapshot: Dictionary = {}) 
 func create_new_game_lobby(host_port: int = -1, restore_snapshot: Dictionary = {}) -> void:
 	var options = _get_options()
 	if options == null:
+		_log_error("LanConnection", "create_new_game_lobby aborted: options node missing")
 		return
 
 	if host_port <= 0:
@@ -159,6 +214,7 @@ func create_new_game_lobby(host_port: int = -1, restore_snapshot: Dictionary = {
 	var peer := NetworkedMultiplayerENet.new()
 	var result = peer.create_server(host_port, MAX_PLAYERS - 1)
 	if result != OK:
+		_log_error("LanConnection", "create_server failed on port %d with error %d" % [host_port, result])
 		_push_system_message("Failed to start host on port %d" % host_port)
 		return
 
@@ -197,6 +253,7 @@ func create_new_game_lobby(host_port: int = -1, restore_snapshot: Dictionary = {
 	session_id = String(active_session.get("session_id", ""))
 	host_instance_id = String(active_session.get("host_instance_id", ""))
 	local_player_token = String(_get_host_token_from_session())
+	_sync_logger_session_tag(session_id)
 	pending_restore_snapshot.clear()
 
 	known_peer_names.clear()
@@ -233,10 +290,12 @@ func join_lan_session(endpoint: String) -> void:
 func join_game_lobby(endpoint: String) -> void:
 	var options = _get_options()
 	if options == null:
+		_log_error("LanConnection", "join_game_lobby aborted: options node missing")
 		return
 
 	var parsed = _parse_endpoint(endpoint)
 	if not parsed["ok"]:
+		_log_warn("LanConnection", "join_game_lobby rejected invalid endpoint: %s" % endpoint)
 		_push_system_message("Invalid endpoint. Use host:port")
 		return
 
@@ -245,6 +304,7 @@ func join_game_lobby(endpoint: String) -> void:
 	var peer := NetworkedMultiplayerENet.new()
 	var result = peer.create_client(parsed["host"], int(parsed["port"]))
 	if result != OK:
+		_log_warn("LanConnection", "create_client failed for %s:%d with error %d" % [parsed["host"], parsed["port"], result])
 		_push_system_message("Connection failed to %s:%d" % [parsed["host"], parsed["port"]])
 		return
 
@@ -254,6 +314,7 @@ func join_game_lobby(endpoint: String) -> void:
 	game_lobby_id = ACTIVE_LOBBY_ID
 	game_lobby_owner_id = HOST_PEER_ID
 	pending_join_endpoint = "%s:%d" % [parsed["host"], parsed["port"]]
+	_sync_logger_session_tag("join:%s" % pending_join_endpoint)
 	last_rejection_reason = ""
 	pending_client_recovery_state.clear()
 	attempted_tokenless_retry = false
@@ -278,12 +339,7 @@ func leave_game_lobby() -> void:
 		active_session = session_registry.touch_session(active_session, SESSION_TTL_SEC)
 		var _saved_active = session_registry.save_active_session(active_session)
 
-	if get_tree().has_network_peer():
-		get_tree().set_network_peer(null)
-
-	if network_peer != null:
-		network_peer.close_connection()
-		network_peer = null
+	_teardown_network_peer()
 
 	game_lobby_id = -1
 	game_lobby_owner_id = -1
@@ -306,6 +362,7 @@ func leave_game_lobby() -> void:
 	attempted_tokenless_retry = false
 	host_endpoint = ""
 	pending_join_endpoint = ""
+	_sync_logger_session_tag("")
 	_reset_scene_transition_state()
 
 	var options = _get_options()
@@ -484,23 +541,30 @@ func _dispatch_incoming_packet(channel : int, data : Dictionary, sender_id : int
 		_record_packet_received_metrics(channel, packet_size)
 	if not _is_allowed_sender_for_message(channel, sender_id):
 		ModLoaderLog.warning("Rejected packet from unknown peer %d" % sender_id, LOG_NAME)
+		_log_warn("Handshake", "Rejected packet from peer=%d type=%d (sender not allowed)" % [sender_id, channel])
 		return
 	if packet_seq > 0 and _is_duplicate_packet(sender_id, channel, packet_seq):
 		ModLoaderLog.info("Dropped duplicate packet type=%d seq=%d from peer=%d" % [channel, packet_seq, sender_id], LOG_NAME)
+		_log_debug("Handshake", "Dropped duplicate packet type=%d seq=%d sender=%d" % [channel, packet_seq, sender_id])
 		return
 	if not _is_valid_phase_packet(channel, data, sender_id):
+		_log_warn("Handshake", "Rejected packet type=%d sender=%d due to phase guard" % [channel, sender_id])
 		return
 
 	if channel == SESSION_MESSAGE_REGISTER_CLIENT:
+		_log_info("Handshake", "Received REGISTER_CLIENT from peer=%d" % sender_id)
 		_receive_client_registration(data, sender_id)
 		return
 	elif channel == SESSION_MESSAGE_REGISTER_ACK:
+		_log_info("Handshake", "Received REGISTER_ACK from peer=%d" % sender_id)
 		_receive_client_registration_ack(data, sender_id)
 		return
 	elif channel == SESSION_MESSAGE_REGISTER_REJECT:
+		_log_warn("Handshake", "Received REGISTER_REJECT from peer=%d" % sender_id)
 		_receive_client_registration_reject(data, sender_id)
 		return
 	elif channel == SESSION_MESSAGE_LOBBY_SYNC:
+		_log_debug("Handshake", "Received LOBBY_SYNC from peer=%d" % sender_id)
 		_receive_lobby_sync(data, sender_id)
 		return
 	elif channel == SESSION_MESSAGE_GLOBAL_CHAT:
@@ -841,6 +905,7 @@ func _on_network_peer_disconnected(peer_id : int) -> void:
 
 func _on_connected_to_server() -> void:
 	if network_peer == null:
+		_log_warn("Handshake", "_on_connected_to_server called with null network_peer")
 		return
 	attempted_tokenless_retry = false
 	_reset_scene_transition_state()
@@ -876,6 +941,16 @@ func _on_connected_to_server() -> void:
 	slot_by_peer_id[steam_id] = 1
 	peer_id_by_slot[1] = steam_id
 	_rebuild_lobby_members()
+	_log_info(
+		"Handshake",
+		"connected_to_server peer_id=%d owner_id=%d pending_endpoint='%s' requested_session='%s' requested_token_empty=%s" % [
+			steam_id,
+			game_lobby_owner_id,
+			pending_join_endpoint,
+			requested_session_id,
+			str(requested_token.empty()),
+		]
+	)
 
 	send_p2p_packet(
 		{
@@ -887,15 +962,18 @@ func _on_connected_to_server() -> void:
 		SESSION_MESSAGE_REGISTER_CLIENT,
 		game_lobby_owner_id
 	)
+	_log_debug("Handshake", "REGISTER_CLIENT sent to owner=%d" % game_lobby_owner_id)
 
 
 func _on_connection_failed() -> void:
+	_log_warn("Handshake", "connection_failed for endpoint '%s'" % pending_join_endpoint)
 	_push_system_message("Connection failed")
 	leave_game_lobby()
 	_go_to_multiplayer_menu()
 
 
 func _on_server_disconnected() -> void:
+	_log_warn("Handshake", "server_disconnected for endpoint '%s'" % pending_join_endpoint)
 	_push_system_message("Server disconnected")
 	leave_game_lobby()
 	_go_to_multiplayer_menu()
@@ -904,12 +982,24 @@ func _on_server_disconnected() -> void:
 func _receive_client_registration(data : Dictionary, sender_id : int) -> void:
 	if not is_host():
 		return
+	_log_info(
+		"HandshakeHost",
+		"register_client from peer=%d username='%s' requested_session='%s' requested_token_empty=%s phase=%s" % [
+			sender_id,
+			String(data.get("USERNAME", "")),
+			String(data.get("SESSION_ID", "")),
+			str(String(data.get("PLAYER_TOKEN", "")).strip_edges().empty()),
+			_current_game_phase(),
+		]
+	)
 
 	if active_session.empty() or session_registry == null:
+		_log_warn("HandshakeHost", "reject peer=%d reason=session_unavailable" % sender_id)
 		_send_register_reject(sender_id, "session_unavailable", "Session is unavailable")
 		return
 
 	if session_registry.is_session_expired(active_session):
+		_log_warn("HandshakeHost", "reject peer=%d reason=session_expired" % sender_id)
 		_send_register_reject(sender_id, "session_expired", "Session expired")
 		return
 
@@ -918,6 +1008,10 @@ func _receive_client_registration(data : Dictionary, sender_id : int) -> void:
 		username = _sanitize_username(String(data["USERNAME"]))
 	var remote_protocol_version = int(data.get("PROTOCOL_VERSION", 0))
 	if remote_protocol_version != PROTOCOL_VERSION:
+		_log_warn(
+			"HandshakeHost",
+			"reject peer=%d reason=protocol_mismatch host=%d client=%d" % [sender_id, PROTOCOL_VERSION, remote_protocol_version]
+		)
 		_send_register_reject(
 			sender_id,
 			"protocol_mismatch",
@@ -932,32 +1026,44 @@ func _receive_client_registration(data : Dictionary, sender_id : int) -> void:
 	var is_resumed = false
 
 	if not requested_session_id.empty() and requested_session_id != session_id:
+		_log_warn(
+			"HandshakeHost",
+			"reject peer=%d reason=session_mismatch requested='%s' actual='%s'" % [sender_id, requested_session_id, session_id]
+		)
 		_send_register_reject(sender_id, "session_mismatch", "Session ID mismatch")
 		return
 
 	if not assigned_token.empty():
 		var existing_player = session_registry.find_player_by_token(active_session, assigned_token)
 		if existing_player.empty():
+			_log_warn("HandshakeHost", "reject peer=%d reason=token_unknown token='%s'" % [sender_id, assigned_token])
 			_send_register_reject(sender_id, "token_unknown", "Unknown player token")
 			return
 
 		assigned_slot = int(existing_player.get("slot", -1))
 		if assigned_slot < 0:
+			_log_warn("HandshakeHost", "reject peer=%d reason=token_invalid_slot token='%s'" % [sender_id, assigned_token])
 			_send_register_reject(sender_id, "token_invalid_slot", "Invalid token slot")
 			return
 
 		if peer_id_by_slot.has(assigned_slot) and int(peer_id_by_slot[assigned_slot]) != sender_id:
+			_log_warn("HandshakeHost", "reject peer=%d reason=token_in_use slot=%d" % [sender_id, assigned_slot])
 			_send_register_reject(sender_id, "token_in_use", "Player token already in use")
 			return
 
 		is_resumed = true
 	else:
-		if _current_game_phase() != "LOBBY":
+		var current_phase = _normalize_phase_name(_current_game_phase())
+		# Новый игрок без resume-token допустим в лобби и pre-run фазах.
+		# Блокируем только mid-run, чтобы не ломать синхронизацию активной волны.
+		if current_phase == "MAIN" or current_phase == "SHOP":
+			_log_warn("HandshakeHost", "reject peer=%d reason=late_join_blocked phase=%s" % [sender_id, current_phase])
 			_send_register_reject(sender_id, "late_join_blocked", "Cannot join mid-run without resume token")
 			return
 
 		assigned_slot = session_registry.allocate_slot(active_session, MAX_PLAYERS)
 		if assigned_slot < 0:
+			_log_warn("HandshakeHost", "reject peer=%d reason=lobby_full" % sender_id)
 			_send_register_reject(sender_id, "lobby_full", "Lobby is full")
 			return
 
@@ -994,6 +1100,16 @@ func _receive_client_registration(data : Dictionary, sender_id : int) -> void:
 		"PROTOCOL_VERSION": PROTOCOL_VERSION,
 	}
 	send_p2p_packet(ack_payload, SESSION_MESSAGE_REGISTER_ACK, sender_id)
+	_log_info(
+		"HandshakeHost",
+		"ack sent to peer=%d slot=%d resumed=%s session='%s' phase=%s" % [
+			sender_id,
+			assigned_slot,
+			str(is_resumed),
+			session_id,
+			String(ack_payload.get("GAME_PHASE", "")),
+		]
+	)
 	_send_lobby_sync()
 
 	if is_resumed and _current_game_phase() == "MAIN" and cached_state_snapshot.size() > 0:
@@ -1004,10 +1120,15 @@ func _receive_client_registration(data : Dictionary, sender_id : int) -> void:
 
 func _receive_client_registration_ack(data : Dictionary, sender_id : int) -> void:
 	if sender_id != game_lobby_owner_id:
+		_log_warn(
+			"HandshakeClient",
+			"ignore register_ack from sender=%d expected_owner=%d" % [sender_id, game_lobby_owner_id]
+		)
 		return
 	attempted_tokenless_retry = false
 
 	if not data.has("SESSION_ID") or not data.has("PLAYER_TOKEN"):
+		_log_warn("HandshakeClient", "register_ack malformed: missing SESSION_ID or PLAYER_TOKEN")
 		_receive_client_registration_reject(
 			{
 				"REASON_CODE": "bad_ack",
@@ -1018,6 +1139,10 @@ func _receive_client_registration_ack(data : Dictionary, sender_id : int) -> voi
 		return
 	var remote_protocol_version = int(data.get("PROTOCOL_VERSION", 0))
 	if remote_protocol_version != PROTOCOL_VERSION:
+		_log_warn(
+			"HandshakeClient",
+			"register_ack protocol mismatch host=%d client=%d" % [remote_protocol_version, PROTOCOL_VERSION]
+		)
 		_receive_client_registration_reject(
 			{
 				"REASON_CODE": "protocol_mismatch",
@@ -1034,6 +1159,16 @@ func _receive_client_registration_ack(data : Dictionary, sender_id : int) -> voi
 	var player_slot = int(data.get("PLAYER_SLOT", -1))
 	var resumed = bool(data.get("RESUMED", false))
 	var game_phase = String(data.get("GAME_PHASE", "LOBBY")).to_upper()
+	_log_info(
+		"HandshakeClient",
+		"register_ack accepted session='%s' slot=%d resumed=%s phase=%s host_endpoint='%s'" % [
+			session_id,
+			player_slot,
+			str(resumed),
+			game_phase,
+			host_endpoint,
+		]
+	)
 
 	if player_slot >= 0:
 		for tracked_slot in peer_id_by_slot.keys():
@@ -1056,20 +1191,35 @@ func _receive_client_registration_ack(data : Dictionary, sender_id : int) -> voi
 			options.in_multiplayer_game = false
 
 	if game_phase == "MAIN" and resumed:
+		_log_info("HandshakeClient", "changing scene to game main (resume)")
 		var _scene_error = get_tree().change_scene(MenuData.game_scene)
 		emit_signal("session_resumed", session_id, player_slot)
 	else:
+		_log_info("HandshakeClient", "changing scene to character selection")
 		_change_scene_to_character_selection()
 		_initiate_ping()
 
 
 func _receive_client_registration_reject(data : Dictionary, sender_id : int) -> void:
 	if sender_id != game_lobby_owner_id:
+		_log_warn(
+			"HandshakeClient",
+			"ignore register_reject from sender=%d expected_owner=%d" % [sender_id, game_lobby_owner_id]
+		)
 		return
 
 	var reason_code = String(data.get("REASON_CODE", "rejected"))
 	var reason_text = String(data.get("REASON_TEXT", "Connection rejected"))
 	var host_protocol_version = int(data.get("PROTOCOL_VERSION", -1))
+	_log_warn(
+		"HandshakeClient",
+		"register_reject reason_code=%s reason_text='%s' host_version=%d tokenless_retry=%s" % [
+			reason_code,
+			reason_text,
+			host_protocol_version,
+			str(attempted_tokenless_retry),
+		]
+	)
 	if reason_code == "protocol_mismatch":
 		if host_protocol_version <= 0:
 			var host_tag_index = reason_text.find("host=")
@@ -1105,6 +1255,7 @@ func _receive_client_registration_reject(data : Dictionary, sender_id : int) -> 
 			SESSION_MESSAGE_REGISTER_CLIENT,
 			game_lobby_owner_id
 		)
+		_log_info("HandshakeClient", "retry register without session/token after reject=%s" % reason_code)
 		return
 
 	last_rejection_reason = reason_code
@@ -1115,6 +1266,10 @@ func _receive_client_registration_reject(data : Dictionary, sender_id : int) -> 
 
 
 func _send_register_reject(target_peer_id: int, reason_code: String, reason_text: String) -> void:
+	_log_warn(
+		"HandshakeHost",
+		"send register_reject to peer=%d reason_code=%s reason_text='%s'" % [target_peer_id, reason_code, reason_text]
+	)
 	send_p2p_packet(
 		{
 			"REASON_CODE": reason_code,
@@ -1128,15 +1283,15 @@ func _send_register_reject(target_peer_id: int, reason_code: String, reason_text
 
 func _respond_to_pong(data : Dictionary) -> void:
 	if not data.has("PING_KEY"):
-		print("WARNING - Pong sent without key")
+		_log_warn("LanConnection", "Pong sent without key")
 		return
 
 	if data["PING_KEY"] != ping_key:
-		print("WARNING - Ping response key doesn't match")
+		_log_warn("LanConnection", "Ping response key doesn't match")
 		return
 
 	if ping_start_time_msec == -1:
-		print("WARNING - Ping request send without starting timer")
+		_log_warn("LanConnection", "Ping request send without starting timer")
 		return
 
 	var current_time_msec = Time.get_ticks_msec()
@@ -1177,6 +1332,7 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 		"sequence": -1,
 	}
 	if not (decoded_payload is Dictionary):
+		_log_warn("PacketParse", "drop packet from peer=%d type=%d reason=payload_not_dictionary" % [sender_id, fallback_message_type])
 		result["ok"] = false
 		return result
 
@@ -1192,6 +1348,7 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 		not decoded_dict.has(ENVELOPE_KEY_PAYLOAD) or
 		not decoded_dict.has(ENVELOPE_KEY_COMPRESSED)
 	):
+		_log_warn("PacketParse", "drop packet from peer=%d type=%d reason=missing_envelope_fields" % [sender_id, fallback_message_type])
 		result["ok"] = false
 		return result
 
@@ -1203,9 +1360,18 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 	var payload_is_compressed = bool(decoded_dict.get(ENVELOPE_KEY_COMPRESSED, false))
 
 	if parsed_message_type != fallback_message_type:
+		_log_warn(
+			"PacketParse",
+			"drop packet from peer=%d reason=message_type_mismatch fallback=%d envelope=%d" % [
+				sender_id,
+				fallback_message_type,
+				parsed_message_type,
+			]
+		)
 		result["ok"] = false
 		return result
 	if packet_sequence <= 0:
+		_log_warn("PacketParse", "drop packet from peer=%d type=%d reason=invalid_sequence seq=%d" % [sender_id, parsed_message_type, packet_sequence])
 		result["ok"] = false
 		return result
 
@@ -1216,22 +1382,42 @@ func _parse_received_packet(fallback_message_type: int, decoded_payload, sender_
 				"protocol_mismatch",
 				"Protocol mismatch: host=%d client=%d" % [PROTOCOL_VERSION, remote_protocol_version]
 			)
+		_log_warn(
+			"PacketParse",
+			"drop packet from peer=%d type=%d reason=protocol_mismatch host=%d remote=%d" % [
+				sender_id,
+				parsed_message_type,
+				PROTOCOL_VERSION,
+				remote_protocol_version,
+			]
+		)
 		result["ok"] = false
 		return result
 
 	if _is_session_bound_message(parsed_message_type):
 		if not session_id.empty() and not remote_session_id.empty() and remote_session_id != session_id:
+			_log_warn(
+				"PacketParse",
+				"drop packet from peer=%d type=%d reason=session_mismatch local='%s' remote='%s'" % [
+					sender_id,
+					parsed_message_type,
+					session_id,
+					remote_session_id,
+				]
+			)
 			result["ok"] = false
 			return result
 
 	if payload_is_compressed:
 		if not (payload_data is PoolByteArray):
+			_log_warn("PacketParse", "drop compressed packet from peer=%d type=%d reason=payload_not_poolbytearray" % [sender_id, parsed_message_type])
 			result["ok"] = false
 			return result
 		result["compressed"] = true
 		result["payload_compressed"] = payload_data
 	else:
 		if not (payload_data is Dictionary):
+			_log_warn("PacketParse", "drop packet from peer=%d type=%d reason=payload_not_dictionary_uncompressed" % [sender_id, parsed_message_type])
 			result["ok"] = false
 			return result
 		result["payload"] = payload_data
@@ -1556,17 +1742,16 @@ func _send_rpc_packet(target_peer_id: int, message_type: int, packet_data: PoolB
 		return
 	if network_peer == null:
 		return
+	if int(network_peer.get_connection_status()) != NetworkedMultiplayerPeer.CONNECTION_CONNECTED:
+		return
 
-	var previous_channel = int(network_peer.transfer_channel)
-	if previous_channel < 0:
-		previous_channel = 0
+	var previous_channel = _sanitize_transfer_channel(int(network_peer.transfer_channel))
 	var previous_mode = int(network_peer.transfer_mode)
 	if previous_mode < 0:
 		previous_mode = NetworkedMultiplayerPeer.TRANSFER_MODE_RELIABLE
 
 	var transfer_channel = _transfer_channel_for_message(message_type)
-	if transfer_channel < 0:
-		transfer_channel = 0
+	transfer_channel = _sanitize_transfer_channel(transfer_channel)
 
 	var is_unreliable = _is_unreliable_message(message_type)
 	var is_reliable = _is_reliable_message(message_type)
@@ -1688,7 +1873,13 @@ func _transfer_channel_for_message(message_type: int) -> int:
 	# Для совместимости RPC в текущей сборке держим единый ENet-канал.
 	# Надёжность разделяем через transfer_mode (reliable/unreliable).
 	var _unused_message_type = message_type
-	return 0
+	return MIN_ENET_TRANSFER_CHANNEL
+
+
+func _sanitize_transfer_channel(channel: int) -> int:
+	if channel < MIN_ENET_TRANSFER_CHANNEL:
+		return MIN_ENET_TRANSFER_CHANNEL
+	return channel
 
 
 func _send_lobby_sync() -> void:
@@ -1850,8 +2041,66 @@ func _go_to_multiplayer_menu() -> void:
 
 
 func _push_system_message(message : String) -> void:
+	_log_info("LanConnection", message)
 	pending_system_messages.push_back(message)
 	emit_signal("global_chat_received", "SYSTEM", message)
+
+
+func _sync_logger_session_tag(tag: String) -> void:
+	var logger_script = load(DIAGNOSTICS_LOGGER_PATH)
+	if logger_script == null:
+		return
+	var session_tag = String(tag).strip_edges()
+	if session_tag.empty():
+		if logger_script.has_method("clear_session"):
+			logger_script.clear_session()
+		return
+	if logger_script.has_method("set_session"):
+		logger_script.set_session(session_tag)
+
+
+func _log_info(tag: String, message: String) -> void:
+	_log_with_level(tag, message, "INFO")
+
+
+func _log_debug(tag: String, message: String) -> void:
+	_log_with_level(tag, message, "DEBUG")
+
+
+func _log_warn(tag: String, message: String) -> void:
+	_log_with_level(tag, message, "WARN")
+
+
+func _log_error(tag: String, message: String) -> void:
+	_log_with_level(tag, message, "ERROR")
+
+
+func _log_with_level(tag: String, message: String, level: String) -> void:
+	var logger_script = load(DIAGNOSTICS_LOGGER_PATH)
+	if logger_script == null:
+		return
+	var options = _get_options()
+	match String(level).to_upper():
+		"ERROR":
+			if logger_script.has_method("log_error_with_options"):
+				logger_script.log_error_with_options(options, tag, message)
+			elif logger_script.has_method("log_with_options"):
+				logger_script.log_with_options(options, tag, message)
+		"WARN":
+			if logger_script.has_method("log_warn_with_options"):
+				logger_script.log_warn_with_options(options, tag, message)
+			elif logger_script.has_method("log_with_options"):
+				logger_script.log_with_options(options, tag, message)
+		"INFO":
+			if logger_script.has_method("log_info_with_options"):
+				logger_script.log_info_with_options(options, tag, message)
+			elif logger_script.has_method("log_with_options"):
+				logger_script.log_with_options(options, tag, message)
+		_:
+			if logger_script.has_method("log_debug_with_options"):
+				logger_script.log_debug_with_options(options, tag, message)
+			elif logger_script.has_method("log_with_options"):
+				logger_script.log_with_options(options, tag, message)
 
 
 func _show_protocol_mismatch_popup(host_version: int, client_version: int) -> void:

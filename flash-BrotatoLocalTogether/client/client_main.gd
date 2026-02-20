@@ -331,16 +331,17 @@ func clean_up_room(is_last_wave:bool = false, is_run_lost:bool = false, is_run_w
 		
 		if entity.has_node("MovementBehavior"):
 			var movemenent_node = entity.get_node("MovementBehavior")
-			entity.remove_child(movemenent_node)
-			movemenent_node.queue_free()
+			movemenent_node.set_name("MovementBehavior_Old")
+			entity.call_deferred("remove_child", movemenent_node)
+			movemenent_node.call_deferred("queue_free")
 			
 			movemenent_node = ClientMovementBehavior.new()
 			movemenent_node.set_name("MovementBehavior")
 			entity.add_child(movemenent_node)
 		
-		_entities_container.remove_child(entity)
+		_entities_container.call_deferred("remove_child", entity)
 		if entity != _player:
-			entity.queue_free()
+			entity.call_deferred("queue_free")
 
 	health_tracker.hide()
 	_wave_cleared_label.hide()
@@ -348,10 +349,10 @@ func clean_up_room(is_last_wave:bool = false, is_run_lost:bool = false, is_run_w
 	
 	_wave_manager.clean_up_room()
 	
-	if is_instance_valid(_player):
+	if is_instance_valid(_player) and _player.has_node("MovementBehavior"):
 		var movemenent_node = _player.get_node("MovementBehavior")
-		_player.remove_child(movemenent_node)
-		movemenent_node.queue_free()
+		_player.call_deferred("remove_child", movemenent_node)
+		movemenent_node.call_deferred("queue_free")
 		
 		_player.clean_up()
 	

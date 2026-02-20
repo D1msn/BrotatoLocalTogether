@@ -47,7 +47,8 @@ func _on_MultiplayerButton_pressed():
 func remove_game_controller():
 	if $"/root".has_node("GameController"):
 		var game_controller = $"/root/GameController"
-		$"/root".remove_child(game_controller)
+		# В _ready() root может быть занят добавлением детей; переносим удаление в deferred.
+		$"/root".call_deferred("remove_child", game_controller)
 		game_controller.call_deferred("queue_free")
 
 

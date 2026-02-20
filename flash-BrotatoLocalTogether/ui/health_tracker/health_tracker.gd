@@ -12,8 +12,8 @@ func init(tracked_players:Dictionary) -> void:
 		add_child(health_bar)
 		health_bar_map[tracked_player_id] = health_bar
 		
-	remove_child(life_bar)
-	life_bar.queue_free()
+	call_deferred("remove_child", life_bar)
+	life_bar.call_deferred("queue_free")
 	update_health_bars(tracked_players)
 	
 func update_health_bars(tracked_players:Dictionary) -> void:
